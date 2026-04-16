@@ -1,6 +1,6 @@
 [package]
 name = "browser-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Shared browser automation library for CPC servers (chromiumoxide + CDP)"
@@ -24,3 +24,4 @@ base64 = "0.21"
 reqwest = { version = "0.11", features = ["native-tls", "json"], default-features = false }
 scraper = "0.18"
 image = { version = "0.24", default-features = false, features = ["jpeg"] }
+vision-core = { git = "https://github.com/josephwander-arch/vision-core", tag = "v0.1.0" }
