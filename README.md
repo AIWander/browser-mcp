@@ -26,7 +26,7 @@ Provides a pure-Rust browser automation layer over Chrome DevTools Protocol (CDP
 
 ## Part of the CPC ecosystem
 
-This crate is a component of **CPC (Cognitive Performance Computing)** — a multi-agent AI orchestration platform built on ~460 MCP tools across 13 servers.
+This crate is a component of **CPC (Copy Paste Compute)** — a multi-agent AI orchestration platform built on ~460 MCP tools across 13 servers.
 
 | Repo | Purpose |
 |------|---------|
