@@ -6,6 +6,16 @@ use serde_json::json;
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "ocr")]
+async fn do_ocr_image(path: &str) -> String {
+    vision_core::ocr_image(path, "eng").await.unwrap_or_else(|e| format!("OCR failed: {}", e))
+}
+
+#[cfg(not(feature = "ocr"))]
+async fn do_ocr_image(_path: &str) -> String {
+    "OCR not available (ocr feature disabled)".to_string()
+}
+
 pub fn list_tools() -> Vec<ToolInfo> {
     let mut tools = vec![
         tool("launch", "Launch browser. headless=true for no window, profile_path for persistent session", json!({
@@ -939,7 +949,7 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     std::fs::write(&saved, &resized).map_err(|e| format!("write resized: {}", e))?;
                 }
                 if do_ocr {
-                    let ocr_text = vision_core::ocr_image(&saved, "eng").await.unwrap_or_else(|e| format!("OCR failed: {}", e));
+                    let ocr_text = do_ocr_image(&saved).await;
                     Ok(vec![text(&json!({"saved": saved, "ocr_text": ocr_text}).to_string())])
                 } else {
                     Ok(vec![text(&format!("Screenshot saved: {}", saved))])
@@ -951,7 +961,7 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     let temp_path = format!("C:\\temp\\browser_ocr_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
                     let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64).map_err(|e| format!("base64 decode: {}", e))?;
                     std::fs::write(&temp_path, &decoded).map_err(|e| format!("write temp: {}", e))?;
-                    let ocr_text = vision_core::ocr_image(&temp_path, "eng").await.unwrap_or_else(|e| format!("OCR failed: {}", e));
+                    let ocr_text = do_ocr_image(&temp_path).await;
                     let _ = std::fs::remove_file(&temp_path);
                     Ok(vec![text(&json!({"ocr_text": ocr_text}).to_string()), ToolContent::Image { data: screenshot_b64, mime_type: "image/jpeg".into() }])
                 } else {
@@ -964,7 +974,7 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     let temp_path = format!("C:\\temp\\browser_ocr_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
                     let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64).map_err(|e| format!("base64 decode: {}", e))?;
                     std::fs::write(&temp_path, &decoded).map_err(|e| format!("write temp: {}", e))?;
-                    let ocr_text = vision_core::ocr_image(&temp_path, "eng").await.unwrap_or_else(|e| format!("OCR failed: {}", e));
+                    let ocr_text = do_ocr_image(&temp_path).await;
                     let _ = std::fs::remove_file(&temp_path);
                     Ok(vec![text(&json!({"ocr_text": ocr_text}).to_string()), ToolContent::Image { data: screenshot_b64, mime_type: "image/jpeg".into() }])
                 } else {
@@ -1736,7 +1746,7 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             let temp_path = format!("C:\\temp\\browser_verify_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
             let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64).map_err(|e| format!("base64 decode: {}", e))?;
             std::fs::write(&temp_path, &decoded).map_err(|e| format!("write temp: {}", e))?;
-            let ocr_text = vision_core::ocr_image(&temp_path, "eng").await.unwrap_or_else(|e| format!("OCR failed: {}", e));
+            let ocr_text = do_ocr_image(&temp_path).await;
             let _ = std::fs::remove_file(&temp_path);
             let pass = ocr_text.to_lowercase().contains(&expected.to_lowercase());
             Ok(vec![text(&json!({"pass": pass, "expected": expected, "ocr_text": ocr_text}).to_string())])
