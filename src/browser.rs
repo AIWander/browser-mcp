@@ -255,6 +255,20 @@ impl BrowserManager {
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--no-first-run")
             .arg("--no-default-browser-check");
+
+        // On Linux running as root, Chrome requires --no-sandbox
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var("USER").as_deref() == Ok("root")
+                || std::env::var("EUID").as_deref() == Ok("0")
+                || std::fs::read_to_string("/proc/self/status")
+                    .map(|s| s.lines().any(|l| l.starts_with("Uid:\t0\t")))
+                    .unwrap_or(false)
+            {
+                eprintln!("[browser-mcp] Running as root on Linux — adding --no-sandbox");
+                builder = builder.arg("--no-sandbox");
+            }
+        }
         
         let config = builder.build().map_err(|e| BrowserError::Cdp(e.to_string()))?;
         
