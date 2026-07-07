@@ -551,6 +551,18 @@ fn looks_like_shell_page(html: &str, text: &str) -> bool {
 }
 
 fn run_js_extract(url: &str, selector: Option<&str>, engine: &str, timeout_ms: u64) -> Result<serde_json::Value, String> {
+    // The linkedom/jsdom backend shells out to a Windows-CPC Node setup
+    // (C:\Program Files\nodejs + C:\CPC\scripts\js_extract.js). Off-Windows those
+    // don't exist, so fail cleanly — callers (smart_browse) then fall through to
+    // Chrome rendering, and the direct js_extract tool returns a clear message.
+    // Use browser_extract_content / browser_get_text (CDP) instead on macOS/Linux.
+    #[cfg(not(windows))]
+    {
+        let _ = (url, selector, engine, timeout_ms);
+        return Err("js_extract (Node/linkedom backend) is Windows-only; use browser_extract_content or browser_get_text (Chrome/CDP) instead".to_string());
+    }
+    #[cfg(windows)]
+    {
     let payload = json!({
         "url": url,
         "selector": selector,
@@ -588,6 +600,7 @@ fn run_js_extract(url: &str, selector: Option<&str>, engine: &str, timeout_ms: u
             .unwrap_or_else(|| format!("js_extract exited with {}", output.status));
         Err(msg)
     }
+    } // end #[cfg(windows)]
 }
 
 /// Shared extraction logic used by both smart_browse and bulk_extract.

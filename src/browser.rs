@@ -120,26 +120,44 @@ impl BrowserManager {
     /// This starts YOUR Chrome (with all your logins), then you use browser_attach to connect.
     /// When `wait_for_cdp` is true (default), polls the CDP endpoint until Chrome is ready.
     pub async fn debug_launch(port: u16, url: Option<&str>, wait_for_cdp: bool) -> Result<String, BrowserError> {
-        // Find Chrome - build paths as Strings
+        // Find Chrome — cross-platform. Non-existent paths are filtered by .exists(),
+        // so listing every OS's candidates is safe; the first that exists wins.
         let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
         let chrome_paths: Vec<String> = vec![
+            // Windows
             r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string(),
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe".to_string(),
             format!(r"{}\Google\Chrome\Application\chrome.exe", localappdata),
+            // macOS (Chrome, then Chromium / Edge / Brave as Chromium-family fallbacks)
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string(),
+            format!("{}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", home),
+            "/Applications/Chromium.app/Contents/MacOS/Chromium".to_string(),
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge".to_string(),
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser".to_string(),
+            // Linux
+            "/usr/bin/google-chrome".to_string(),
+            "/usr/bin/google-chrome-stable".to_string(),
+            "/usr/bin/chromium".to_string(),
+            "/usr/bin/chromium-browser".to_string(),
+            "/snap/bin/chromium".to_string(),
         ];
 
         let chrome_path = chrome_paths.iter()
             .find(|p| std::path::Path::new(p).exists())
-            .ok_or_else(|| BrowserError::ProcessError("Chrome not found".into()))?;
+            .ok_or_else(|| BrowserError::ProcessError(
+                "Chrome/Chromium not found. Install Google Chrome, or on macOS ensure it's in /Applications.".into()
+            ))?;
 
         let target_url = url.unwrap_or("about:blank");
 
-        // Use a dedicated user-data-dir so debug Chrome forks a NEW process
-        // even when the user's default Chrome is already running.
-        let debug_profile = format!(
-            "{}\\CPC\\chrome-debug-profile",
-            std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".into())
-        );
+        // Dedicated user-data-dir so debug Chrome forks a NEW process even when the
+        // user's default Chrome is already running. Cross-platform temp dir.
+        let debug_profile = std::env::temp_dir()
+            .join("CPC")
+            .join("chrome-debug-profile")
+            .to_string_lossy()
+            .into_owned();
         let _ = std::fs::create_dir_all(&debug_profile);
 
         // Launch Chrome with debug port + isolated profile
