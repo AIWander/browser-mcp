@@ -96,5 +96,9 @@ pub enum ToolContent {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image")]
-    Image { data: String, #[serde(rename = "mimeType")] mime_type: String },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
 }

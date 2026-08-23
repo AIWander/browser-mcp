@@ -1,6 +1,6 @@
 //! Tool definitions and handlers
-// NAV: TOC at line 2387 | 16 fn | 0 struct | 2026-04-14
-use crate::browser::{SharedBrowser, BrowserManager, RouteAction};
+// NAV: TOC at line 3280 | 16 fn | 0 struct | 2026-04-14
+use crate::browser::{BrowserManager, RouteAction, SharedBrowser};
 use crate::types::*;
 use serde_json::json;
 use std::process::Command;
@@ -8,7 +8,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "ocr")]
 async fn do_ocr_image(path: &str) -> String {
-    vision_core::ocr_image(path, "eng").await.unwrap_or_else(|e| format!("OCR failed: {}", e))
+    vision_core::ocr_image(path, "eng")
+        .await
+        .unwrap_or_else(|e| format!("OCR failed: {}", e))
 }
 
 #[cfg(not(feature = "ocr"))]
@@ -537,9 +539,16 @@ async fn http_scrape_text(url: &str) -> Result<(String, String, u128), String> {
 
 fn has_js_shell_signals(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    ["id=\"root\"", "id='root'", "id=\"app\"", "id='app'", "id=\"__next\"", "id='__next'"]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    [
+        "id=\"root\"",
+        "id='root'",
+        "id=\"app\"",
+        "id='app'",
+        "id=\"__next\"",
+        "id='__next'",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn text_is_short(text: &str) -> bool {
@@ -550,7 +559,12 @@ fn looks_like_shell_page(html: &str, text: &str) -> bool {
     text_is_short(text) || (has_js_shell_signals(html) && text.trim().chars().count() < 300)
 }
 
-fn run_js_extract(url: &str, selector: Option<&str>, engine: &str, timeout_ms: u64) -> Result<serde_json::Value, String> {
+fn run_js_extract(
+    url: &str,
+    selector: Option<&str>,
+    engine: &str,
+    timeout_ms: u64,
+) -> Result<serde_json::Value, String> {
     // The linkedom/jsdom backend shells out to a Windows-CPC Node setup
     // (C:\Program Files\nodejs + C:\CPC\scripts\js_extract.js). Off-Windows those
     // don't exist, so fail cleanly — callers (smart_browse) then fall through to
@@ -563,43 +577,49 @@ fn run_js_extract(url: &str, selector: Option<&str>, engine: &str, timeout_ms: u
     }
     #[cfg(windows)]
     {
-    let payload = json!({
-        "url": url,
-        "selector": selector,
-        "engine": engine,
-        "timeout": timeout_ms
-    });
-    let json_args = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-    let output = Command::new("C:\\Program Files\\nodejs\\node.exe")
-        .arg("C:\\CPC\\scripts\\js_extract.js")
-        .arg(&json_args)
-        .env("NODE_PATH", "C:\\CPC\\node_modules")
-        .output()
-        .map_err(|e| format!("spawn js_extract: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stdout.is_empty() {
-        return Err(if stderr.is_empty() {
-            "js_extract produced no stdout".into()
-        } else {
-            format!("js_extract stderr: {}", stderr)
+        let payload = json!({
+            "url": url,
+            "selector": selector,
+            "engine": engine,
+            "timeout": timeout_ms
         });
-    }
+        let json_args = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+        let output = Command::new("C:\\Program Files\\nodejs\\node.exe")
+            .arg("C:\\CPC\\scripts\\js_extract.js")
+            .arg(&json_args)
+            .env("NODE_PATH", "C:\\CPC\\node_modules")
+            .output()
+            .map_err(|e| format!("spawn js_extract: {}", e))?;
 
-    let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).map_err(|e| format!("js_extract JSON parse failed: {} | stdout: {}", e, stdout))?;
-    if output.status.success() {
-        Ok(parsed)
-    } else {
-        let msg = parsed
-            .get("error")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-            .or_else(|| if stderr.is_empty() { None } else { Some(stderr.clone()) })
-            .unwrap_or_else(|| format!("js_extract exited with {}", output.status));
-        Err(msg)
-    }
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stdout.is_empty() {
+            return Err(if stderr.is_empty() {
+                "js_extract produced no stdout".into()
+            } else {
+                format!("js_extract stderr: {}", stderr)
+            });
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|e| format!("js_extract JSON parse failed: {} | stdout: {}", e, stdout))?;
+        if output.status.success() {
+            Ok(parsed)
+        } else {
+            let msg = parsed
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| {
+                    if stderr.is_empty() {
+                        None
+                    } else {
+                        Some(stderr.clone())
+                    }
+                })
+                .unwrap_or_else(|| format!("js_extract exited with {}", output.status));
+            Err(msg)
+        }
     } // end #[cfg(windows)]
 }
 
@@ -614,14 +634,24 @@ async fn smart_extract(url: &str, selector: Option<&str>) -> (String, &'static s
     }
     // Tier 2: linkedom
     if let Ok(linkedom) = run_js_extract(url, selector, "linkedom", 5000) {
-        let t = linkedom.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let t = linkedom
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !t.is_empty() && !text_is_short(&t) {
             return (t, "linkedom");
         }
     }
     // Tier 3: jsdom
     if let Ok(jsdom) = run_js_extract(url, selector, "jsdom", 5000) {
-        let t = jsdom.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let t = jsdom
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !t.is_empty() {
             return (t, "jsdom");
         }
@@ -633,8 +663,7 @@ fn resize_jpeg_bytes(bytes: &[u8], max_width: u32, quality: u8) -> Result<Vec<u8
     use image::GenericImageView;
     use std::io::Cursor;
 
-    let img = image::load_from_memory(bytes)
-        .map_err(|e| format!("image decode: {}", e))?;
+    let img = image::load_from_memory(bytes).map_err(|e| format!("image decode: {}", e))?;
 
     let (w, h) = img.dimensions();
     if w <= max_width {
@@ -646,7 +675,8 @@ fn resize_jpeg_bytes(bytes: &[u8], max_width: u32, quality: u8) -> Result<Vec<u8
     let resized = img.resize_exact(max_width, new_h, image::imageops::FilterType::Lanczos3);
 
     let mut output = Cursor::new(Vec::new());
-    resized.write_to(&mut output, image::ImageOutputFormat::Jpeg(quality))
+    resized
+        .write_to(&mut output, image::ImageOutputFormat::Jpeg(quality))
         .map_err(|e| format!("image encode: {}", e))?;
 
     Ok(output.into_inner())
@@ -656,7 +686,10 @@ fn resize_b64_jpeg(b64: &str, max_width: u32, quality: u8) -> Result<String, Str
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
         .map_err(|e| format!("base64 decode: {}", e))?;
     let resized = resize_jpeg_bytes(&bytes, max_width, quality)?;
-    Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &resized))
+    Ok(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &resized,
+    ))
 }
 
 fn format_json_text(value: &serde_json::Value) -> String {
@@ -665,7 +698,8 @@ fn format_json_text(value: &serde_json::Value) -> String {
 
 fn build_extract_script(include_links: bool, max_length: usize) -> String {
     let link_mode = if include_links { "true" } else { "false" };
-    format!(r#"
+    format!(
+        r#"
         (() => {{
             const remove = ['nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript',
                 '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '.sidebar',
@@ -715,28 +749,51 @@ fn build_extract_script(include_links: bool, max_length: usize) -> String {
                 content_length: content.length
             }});
         }})()
-    "#)
+    "#
+    )
 }
 
-async fn extract_page_content(browser: &SharedBrowser, include_links: bool, max_length: usize) -> Result<serde_json::Value, String> {
+async fn extract_page_content(
+    browser: &SharedBrowser,
+    include_links: bool,
+    max_length: usize,
+) -> Result<serde_json::Value, String> {
     let script = build_extract_script(include_links, max_length);
-    let result = browser.read().await.evaluate(&script).await.map_err(|e| e.to_string())?;
+    let result = browser
+        .read()
+        .await
+        .evaluate(&script)
+        .await
+        .map_err(|e| e.to_string())?;
     let result_str = result.as_str().unwrap_or("");
     serde_json::from_str::<serde_json::Value>(result_str).map_err(|_| result_str.to_string())
 }
 
-pub async fn handle_tool(browser: &SharedBrowser, name: &str, params: serde_json::Value) -> ToolResult {
+pub async fn handle_tool(
+    browser: &SharedBrowser,
+    name: &str,
+    params: serde_json::Value,
+) -> ToolResult {
     let result = handle_tool_inner(browser, name, params).await;
     match result {
-        Ok(content) => ToolResult { content, is_error: false },
+        Ok(content) => ToolResult {
+            content,
+            is_error: false,
+        },
         Err(e) => ToolResult {
-            content: vec![ToolContent::Text { text: format!("Error: {}", e) }],
+            content: vec![ToolContent::Text {
+                text: format!("Error: {}", e),
+            }],
             is_error: true,
         },
     }
 }
 
-async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_json::Value) -> Result<Vec<ToolContent>, String> {
+async fn handle_tool_inner(
+    browser: &SharedBrowser,
+    name: &str,
+    params: serde_json::Value,
+) -> Result<Vec<ToolContent>, String> {
     let p = |key: &str| params.get(key);
     let s = |key: &str| p(key).and_then(|v| v.as_str()).unwrap_or_default();
     let b = |key: &str, def: bool| p(key).and_then(|v| v.as_bool()).unwrap_or(def);
@@ -746,51 +803,92 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
         "launch" => {
             let headless = b("headless", true);
             let profile = p("profile_path").and_then(|v| v.as_str()).map(String::from);
-            browser.write().await.launch(headless, profile).await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&format!("Browser launched (headless={})", headless))])
+            browser
+                .write()
+                .await
+                .launch(headless, profile)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(&format!(
+                "Browser launched (headless={})",
+                headless
+            ))])
         }
-        
+
         "attach" => {
             let port = i("port", 9222) as u16;
-            let current_url = browser.write().await.attach(port).await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&format!("Attached to Chrome on port {} (current: {})", port, current_url))])
+            let current_url = browser
+                .write()
+                .await
+                .attach(port)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(&format!(
+                "Attached to Chrome on port {} (current: {})",
+                port, current_url
+            ))])
         }
-        
+
         "debug_launch" => {
             let port = i("port", 9222) as u16;
             let url = p("url").and_then(|v| v.as_str());
             let wait_for_cdp = b("wait_for_cdp", true);
-            let result = BrowserManager::debug_launch(port, url, wait_for_cdp).await.map_err(|e| e.to_string())?;
+            let result = BrowserManager::debug_launch(port, url, wait_for_cdp)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
-        
+
         "close" => {
-            browser.write().await.close().await.map_err(|e| e.to_string())?;
+            browser
+                .write()
+                .await
+                .close()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Browser closed")])
         }
-        
+
         "navigate" => {
             let url = s("url");
             let wait = s("wait_until");
             let wait = if wait.is_empty() { "load" } else { wait };
-            let title = browser.write().await.navigate(url, wait).await.map_err(|e| e.to_string())?;
+            let title = browser
+                .write()
+                .await
+                .navigate(url, wait)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Navigated to: {} ({})", url, title))])
         }
-        
+
         "click" => {
             let do_auto_wait = b("auto_wait", false);
             let wait_ms = i("auto_wait_ms", 5000) as u64;
             let bm = browser.read().await;
             if let Some(xpath) = p("xpath").and_then(|v| v.as_str()) {
-                if do_auto_wait { bm.auto_wait_xpath(xpath, wait_ms).await.map_err(|e| e.to_string())?; }
+                if do_auto_wait {
+                    bm.auto_wait_xpath(xpath, wait_ms)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
                 let result = bm.click_xpath(xpath).await.map_err(|e| e.to_string())?;
                 Ok(vec![text(&result)])
             } else if let Some(sel) = p("selector").and_then(|v| v.as_str()) {
-                if do_auto_wait { bm.auto_wait_selector(sel, wait_ms).await.map_err(|e| e.to_string())?; }
+                if do_auto_wait {
+                    bm.auto_wait_selector(sel, wait_ms)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
                 bm.click_selector(sel).await.map_err(|e| e.to_string())?;
                 Ok(vec![text(&format!("Clicked: {}", sel))])
-            } else if let (Some(x), Some(y)) = (p("x").and_then(|v| v.as_i64()), p("y").and_then(|v| v.as_i64())) {
-                bm.click_coords(x as i32, y as i32).await.map_err(|e| e.to_string())?;
+            } else if let (Some(x), Some(y)) = (
+                p("x").and_then(|v| v.as_i64()),
+                p("y").and_then(|v| v.as_i64()),
+            ) {
+                bm.click_coords(x as i32, y as i32)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(vec![text(&format!("Clicked at ({}, {})", x, y))])
             } else if let Some(match_text) = p("match_text").and_then(|v| v.as_str()) {
                 // Fuzzy text matching - same logic as agent click
@@ -823,29 +921,81 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
 
                 if let Some(arr) = elements.as_array() {
                     for el in arr {
-                        let get_f = |k: &str| el.get(k).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                        let (et, ea, etit, ehref, eid, ename) = (get_f("text"), get_f("aria"), get_f("title"), get_f("href"), get_f("id"), get_f("name"));
-                        let score = if et == match_lower || ea == match_lower { 100 }
-                            else if et.starts_with(&match_lower) || ea.starts_with(&match_lower) { 90 }
-                            else if et.contains(&match_lower) { 80 }
-                            else if ea.contains(&match_lower) || etit.contains(&match_lower) { 70 }
-                            else if ehref.contains(&match_lower) { 60 }
-                            else if eid.contains(&match_lower) || ename.contains(&match_lower) { 50 }
-                            else if match_lower.split_whitespace().all(|w| et.contains(w)) { 35 }
-                            else { 0 };
-                        if score > best.as_ref().map_or(0, |bst| bst.0) { best = Some((score, el)); }
+                        let get_f = |k: &str| {
+                            el.get(k)
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase()
+                        };
+                        let (et, ea, etit, ehref, eid, ename) = (
+                            get_f("text"),
+                            get_f("aria"),
+                            get_f("title"),
+                            get_f("href"),
+                            get_f("id"),
+                            get_f("name"),
+                        );
+                        let score = if et == match_lower || ea == match_lower {
+                            100
+                        } else if et.starts_with(&match_lower) || ea.starts_with(&match_lower) {
+                            90
+                        } else if et.contains(&match_lower) {
+                            80
+                        } else if ea.contains(&match_lower) || etit.contains(&match_lower) {
+                            70
+                        } else if ehref.contains(&match_lower) {
+                            60
+                        } else if eid.contains(&match_lower) || ename.contains(&match_lower) {
+                            50
+                        } else if match_lower.split_whitespace().all(|w| et.contains(w)) {
+                            35
+                        } else {
+                            0
+                        };
+                        if score > best.as_ref().map_or(0, |bst| bst.0) {
+                            best = Some((score, el));
+                        }
                     }
                     if let Some((score, el)) = best {
                         let el_text = el.get("text").and_then(|v| v.as_str()).unwrap_or("?");
                         let sel_str = el.get("selector").and_then(|v| v.as_str()).unwrap_or("");
                         let cx = el.get("cx").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                         let cy = el.get("cy").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                        let clicked = if !sel_str.is_empty() { bm.click_selector(sel_str).await.is_ok() } else { false };
-                        if !clicked { bm.click_coords(cx, cy).await.map_err(|e| e.to_string())?; }
-                        Ok(vec![text(&format!("Clicked '{}' {} [score:{}]", el_text, if clicked { format!("via {}", sel_str) } else { format!("at ({},{})", cx, cy) }, score))])
+                        let clicked = if !sel_str.is_empty() {
+                            bm.click_selector(sel_str).await.is_ok()
+                        } else {
+                            false
+                        };
+                        if !clicked {
+                            bm.click_coords(cx, cy).await.map_err(|e| e.to_string())?;
+                        }
+                        Ok(vec![text(&format!(
+                            "Clicked '{}' {} [score:{}]",
+                            el_text,
+                            if clicked {
+                                format!("via {}", sel_str)
+                            } else {
+                                format!("at ({},{})", cx, cy)
+                            },
+                            score
+                        ))])
                     } else {
-                        let available: Vec<String> = arr.iter().filter_map(|el| { let t = el.get("text").and_then(|v| v.as_str()).unwrap_or(""); if !t.is_empty() { Some(t.to_string()) } else { None } }).take(20).collect();
-                        Err(format!("No match for '{}'. Available: {:?}", match_text, available))
+                        let available: Vec<String> = arr
+                            .iter()
+                            .filter_map(|el| {
+                                let t = el.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                if !t.is_empty() {
+                                    Some(t.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .take(20)
+                            .collect();
+                        Err(format!(
+                            "No match for '{}'. Available: {:?}",
+                            match_text, available
+                        ))
                     }
                 } else {
                     Err("Failed to scan clickable elements".into())
@@ -854,7 +1004,7 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 Err("Provide selector, match_text, or x,y coordinates".into())
             }
         }
-        
+
         "type" | "type_text" => {
             let text_val = s("text");
             let clear = b("clear", true);
@@ -865,13 +1015,26 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
 
             if let Some(xpath) = xpath_direct {
                 let bm = browser.read().await;
-                if do_auto_wait { bm.auto_wait_xpath(xpath, wait_ms).await.map_err(|e| e.to_string())?; }
-                let result = bm.type_xpath(xpath, text_val, clear).await.map_err(|e| e.to_string())?;
+                if do_auto_wait {
+                    bm.auto_wait_xpath(xpath, wait_ms)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                let result = bm
+                    .type_xpath(xpath, text_val, clear)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(vec![text(&result)])
             } else if let Some(sel) = sel_direct {
                 let bm = browser.read().await;
-                if do_auto_wait { bm.auto_wait_selector(sel, wait_ms).await.map_err(|e| e.to_string())?; }
-                bm.type_text(sel, text_val, clear).await.map_err(|e| e.to_string())?;
+                if do_auto_wait {
+                    bm.auto_wait_selector(sel, wait_ms)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                bm.type_text(sel, text_val, clear)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(vec![text(&format!("Typed into {}", sel))])
             } else if let Some(match_text) = p("match_text").and_then(|v| v.as_str()) {
                 // Fuzzy match to find input/textarea
@@ -896,39 +1059,92 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                             };
                         })
                 "#;
-                let elements = browser.read().await.evaluate(script).await.map_err(|e| e.to_string())?;
+                let elements = browser
+                    .read()
+                    .await
+                    .evaluate(script)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let match_lower = match_text.to_lowercase();
                 let mut best: Option<(i32, &serde_json::Value)> = None;
-                
+
                 if let Some(arr) = elements.as_array() {
                     for el in arr {
-                        let get_f = |k: &str| el.get(k).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                        let (ph, ar, nm, id, lb) = (get_f("placeholder"), get_f("aria"), get_f("name"), get_f("id"), get_f("label"));
-                        let score = if lb == match_lower || ar == match_lower || ph == match_lower { 100 }
-                            else if lb.contains(&match_lower) || ar.contains(&match_lower) { 80 }
-                            else if ph.contains(&match_lower) { 70 }
-                            else if nm.contains(&match_lower) || id.contains(&match_lower) { 60 }
-                            else if match_lower.split_whitespace().all(|w| lb.contains(w) || ph.contains(w)) { 40 }
-                            else { 0 };
-                        if score > best.as_ref().map_or(0, |b| b.0) { best = Some((score, el)); }
+                        let get_f = |k: &str| {
+                            el.get(k)
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase()
+                        };
+                        let (ph, ar, nm, id, lb) = (
+                            get_f("placeholder"),
+                            get_f("aria"),
+                            get_f("name"),
+                            get_f("id"),
+                            get_f("label"),
+                        );
+                        let score = if lb == match_lower || ar == match_lower || ph == match_lower {
+                            100
+                        } else if lb.contains(&match_lower) || ar.contains(&match_lower) {
+                            80
+                        } else if ph.contains(&match_lower) {
+                            70
+                        } else if nm.contains(&match_lower) || id.contains(&match_lower) {
+                            60
+                        } else if match_lower
+                            .split_whitespace()
+                            .all(|w| lb.contains(w) || ph.contains(w))
+                        {
+                            40
+                        } else {
+                            0
+                        };
+                        if score > best.as_ref().map_or(0, |b| b.0) {
+                            best = Some((score, el));
+                        }
                     }
                     if let Some((_score, el)) = best {
                         let sel_str = el.get("selector").and_then(|v| v.as_str()).unwrap_or("");
                         let desc = el.get("label").and_then(|v| v.as_str()).unwrap_or(
-                            el.get("placeholder").and_then(|v| v.as_str()).unwrap_or(
-                                el.get("name").and_then(|v| v.as_str()).unwrap_or("?")));
-                        if sel_str.is_empty() { return Err("Found match but no usable selector".into()); }
-                        browser.read().await.type_text(sel_str, text_val, clear).await.map_err(|e| e.to_string())?;
+                            el.get("placeholder")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(el.get("name").and_then(|v| v.as_str()).unwrap_or("?")),
+                        );
+                        if sel_str.is_empty() {
+                            return Err("Found match but no usable selector".into());
+                        }
+                        browser
+                            .read()
+                            .await
+                            .type_text(sel_str, text_val, clear)
+                            .await
+                            .map_err(|e| e.to_string())?;
                         Ok(vec![text(&format!("Typed into '{}' ({})", desc, sel_str))])
                     } else {
-                        let available: Vec<String> = arr.iter().filter_map(|el| {
-                            let p = el.get("placeholder").and_then(|v| v.as_str()).unwrap_or("");
-                            let l = el.get("label").and_then(|v| v.as_str()).unwrap_or("");
-                            let n = el.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            let desc = if !l.is_empty() { l } else if !p.is_empty() { p } else if !n.is_empty() { n } else { return None };
-                            Some(desc.to_string())
-                        }).take(15).collect();
-                        Err(format!("No input match for '{}'. Available: {:?}", match_text, available))
+                        let available: Vec<String> = arr
+                            .iter()
+                            .filter_map(|el| {
+                                let p =
+                                    el.get("placeholder").and_then(|v| v.as_str()).unwrap_or("");
+                                let l = el.get("label").and_then(|v| v.as_str()).unwrap_or("");
+                                let n = el.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                let desc = if !l.is_empty() {
+                                    l
+                                } else if !p.is_empty() {
+                                    p
+                                } else if !n.is_empty() {
+                                    n
+                                } else {
+                                    return None;
+                                };
+                                Some(desc.to_string())
+                            })
+                            .take(15)
+                            .collect();
+                        Err(format!(
+                            "No input match for '{}'. Available: {:?}",
+                            match_text, available
+                        ))
                     }
                 } else {
                     Err("Failed to scan input elements".into())
@@ -937,13 +1153,18 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 Err("Provide selector or match_text".into())
             }
         }
-        
+
         "press" => {
             let key = s("key");
-            browser.read().await.press_key(key).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .press_key(key)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Pressed: {}", key))])
         }
-        
+
         "screenshot" => {
             let full = b("full_page", false);
             let quality = i("quality", 80) as u8;
@@ -954,71 +1175,149 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
 
             if let Some(path) = save_path {
                 // Save to file, return path (0 tokens)
-                let saved = br.screenshot_to_file(path, full, quality).await.map_err(|e| e.to_string())?;
+                let saved = br
+                    .screenshot_to_file(path, full, quality)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 // Resize if max_width specified
                 if let Some(mw) = max_width {
-                    let bytes = std::fs::read(&saved).map_err(|e| format!("read for resize: {}", e))?;
+                    let bytes =
+                        std::fs::read(&saved).map_err(|e| format!("read for resize: {}", e))?;
                     let resized = resize_jpeg_bytes(&bytes, mw, quality)?;
-                    std::fs::write(&saved, &resized).map_err(|e| format!("write resized: {}", e))?;
+                    std::fs::write(&saved, &resized)
+                        .map_err(|e| format!("write resized: {}", e))?;
                 }
                 if do_ocr {
                     let ocr_text = do_ocr_image(&saved).await;
-                    Ok(vec![text(&json!({"saved": saved, "ocr_text": ocr_text}).to_string())])
+                    Ok(vec![text(
+                        &json!({"saved": saved, "ocr_text": ocr_text}).to_string(),
+                    )])
                 } else {
                     Ok(vec![text(&format!("Screenshot saved: {}", saved))])
                 }
             } else if let Some(sel) = p("selector").and_then(|v| v.as_str()) {
-                let mut screenshot_b64 = br.screenshot_element(sel, quality).await.map_err(|e| e.to_string())?;
-                if let Some(mw) = max_width { screenshot_b64 = resize_b64_jpeg(&screenshot_b64, mw, quality)?; }
+                let mut screenshot_b64 = br
+                    .screenshot_element(sel, quality)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if let Some(mw) = max_width {
+                    screenshot_b64 = resize_b64_jpeg(&screenshot_b64, mw, quality)?;
+                }
                 if do_ocr {
-                    let temp_path = format!("C:\\temp\\browser_ocr_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-                    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64).map_err(|e| format!("base64 decode: {}", e))?;
-                    std::fs::write(&temp_path, &decoded).map_err(|e| format!("write temp: {}", e))?;
+                    let temp_path = format!(
+                        "C:\\temp\\browser_ocr_{}.png",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    );
+                    let decoded = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &screenshot_b64,
+                    )
+                    .map_err(|e| format!("base64 decode: {}", e))?;
+                    std::fs::write(&temp_path, &decoded)
+                        .map_err(|e| format!("write temp: {}", e))?;
                     let ocr_text = do_ocr_image(&temp_path).await;
                     let _ = std::fs::remove_file(&temp_path);
-                    Ok(vec![text(&json!({"ocr_text": ocr_text}).to_string()), ToolContent::Image { data: screenshot_b64, mime_type: "image/jpeg".into() }])
+                    Ok(vec![
+                        text(&json!({"ocr_text": ocr_text}).to_string()),
+                        ToolContent::Image {
+                            data: screenshot_b64,
+                            mime_type: "image/jpeg".into(),
+                        },
+                    ])
                 } else {
-                    Ok(vec![ToolContent::Image { data: screenshot_b64, mime_type: "image/jpeg".into() }])
+                    Ok(vec![ToolContent::Image {
+                        data: screenshot_b64,
+                        mime_type: "image/jpeg".into(),
+                    }])
                 }
             } else {
-                let mut screenshot_b64 = br.screenshot(full, quality).await.map_err(|e| e.to_string())?;
-                if let Some(mw) = max_width { screenshot_b64 = resize_b64_jpeg(&screenshot_b64, mw, quality)?; }
+                let mut screenshot_b64 = br
+                    .screenshot(full, quality)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if let Some(mw) = max_width {
+                    screenshot_b64 = resize_b64_jpeg(&screenshot_b64, mw, quality)?;
+                }
                 if do_ocr {
-                    let temp_path = format!("C:\\temp\\browser_ocr_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-                    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64).map_err(|e| format!("base64 decode: {}", e))?;
-                    std::fs::write(&temp_path, &decoded).map_err(|e| format!("write temp: {}", e))?;
+                    let temp_path = format!(
+                        "C:\\temp\\browser_ocr_{}.png",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    );
+                    let decoded = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &screenshot_b64,
+                    )
+                    .map_err(|e| format!("base64 decode: {}", e))?;
+                    std::fs::write(&temp_path, &decoded)
+                        .map_err(|e| format!("write temp: {}", e))?;
                     let ocr_text = do_ocr_image(&temp_path).await;
                     let _ = std::fs::remove_file(&temp_path);
-                    Ok(vec![text(&json!({"ocr_text": ocr_text}).to_string()), ToolContent::Image { data: screenshot_b64, mime_type: "image/jpeg".into() }])
+                    Ok(vec![
+                        text(&json!({"ocr_text": ocr_text}).to_string()),
+                        ToolContent::Image {
+                            data: screenshot_b64,
+                            mime_type: "image/jpeg".into(),
+                        },
+                    ])
                 } else {
-                    Ok(vec![ToolContent::Image { data: screenshot_b64, mime_type: "image/jpeg".into() }])
+                    Ok(vec![ToolContent::Image {
+                        data: screenshot_b64,
+                        mime_type: "image/jpeg".into(),
+                    }])
                 }
             }
         }
-        
+
         "screenshot_burst" => {
             let count = i("count", 5) as usize;
             let interval = i("interval_ms", 200) as u64;
             let quality = i("quality", 60) as u8;
-            let shots = browser.read().await.screenshot_burst(count, interval, quality).await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&json!({"count": shots.len(), "images": shots}).to_string())])
+            let shots = browser
+                .read()
+                .await
+                .screenshot_burst(count, interval, quality)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(
+                &json!({"count": shots.len(), "images": shots}).to_string(),
+            )])
         }
-        
+
         "wait_for" => {
             let timeout = i("timeout_ms", 10000) as u64;
             let condition = p("condition").and_then(|v| v.as_str()).unwrap_or("visible");
             let check_visible = condition != "exists";
             let bm = browser.read().await;
             if let Some(xpath) = p("xpath").and_then(|v| v.as_str()) {
-                bm.wait_for_xpath(xpath, timeout, check_visible).await.map_err(|e| e.to_string())?;
-                Ok(vec![text(&format!("XPath {} ({}): {}", if check_visible { "visible" } else { "found" }, condition, xpath))])
+                bm.wait_for_xpath(xpath, timeout, check_visible)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(vec![text(&format!(
+                    "XPath {} ({}): {}",
+                    if check_visible { "visible" } else { "found" },
+                    condition,
+                    xpath
+                ))])
             } else {
                 let sel = s("selector");
-                bm.wait_for(sel, timeout, check_visible).await.map_err(|e| e.to_string())?;
-                Ok(vec![text(&format!("Element {} ({}): {}", if check_visible { "visible" } else { "found" }, condition, sel))])
+                bm.wait_for(sel, timeout, check_visible)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(vec![text(&format!(
+                    "Element {} ({}): {}",
+                    if check_visible { "visible" } else { "found" },
+                    condition,
+                    sel
+                ))])
             }
         }
-        
+
         "get_html" => {
             let bm = browser.read().await;
             if let Some(xpath) = p("xpath").and_then(|v| v.as_str()) {
@@ -1052,67 +1351,116 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 Ok(vec![text(&txt)])
             }
         }
-        
+
         "eval" => {
             let script = s("script");
-            let result = browser.read().await.evaluate(script).await.map_err(|e| e.to_string())?;
+            let result = browser
+                .read()
+                .await
+                .evaluate(script)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result.to_string())])
         }
-        
+
         "scroll" => {
             let dir = s("direction");
             let dir = if dir.is_empty() { "down" } else { dir };
             let amount = i("amount", 500) as i32;
-            browser.read().await.scroll(dir, amount).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .scroll(dir, amount)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Scrolled {} by {}", dir, amount))])
         }
-        
+
         "select" => {
             let sel = s("selector");
             let val = s("value");
-            browser.read().await.select_option(sel, val).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .select_option(sel, val)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Selected {} in {}", val, sel))])
         }
-        
+
         "hover" => {
             let sel = s("selector");
-            browser.read().await.hover(sel).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .hover(sel)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Hovering: {}", sel))])
         }
-        
+
         "focus" => {
             let sel = s("selector");
-            browser.read().await.focus(sel).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .focus(sel)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Focused: {}", sel))])
         }
-        
+
         "exists" => {
             let sel = s("selector");
-            let exists = browser.read().await.exists(sel).await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&json!({"exists": exists, "selector": sel}).to_string())])
+            let exists = browser
+                .read()
+                .await
+                .exists(sel)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(
+                &json!({"exists": exists, "selector": sel}).to_string(),
+            )])
         }
-        
+
         "get_bounds" => {
             let sel = s("selector");
-            let (x, y, w, h) = browser.read().await.get_element_bounds(sel).await.map_err(|e| e.to_string())?;
+            let (x, y, w, h) = browser
+                .read()
+                .await
+                .get_element_bounds(sel)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&json!({"x": x, "y": y, "width": w, "height": h, "center_x": x + w/2.0, "center_y": y + h/2.0}).to_string())])
         }
-        
+
         "get_clickables" => {
-            let elements = browser.read().await.get_clickables().await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&json!({"count": elements.len(), "elements": elements}).to_string())])
+            let elements = browser
+                .read()
+                .await
+                .get_clickables()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(
+                &json!({"count": elements.len(), "elements": elements}).to_string(),
+            )])
         }
-        
+
         "get_metrics" => {
-            let metrics = browser.read().await.get_metrics().await.map_err(|e| e.to_string())?;
+            let metrics = browser
+                .read()
+                .await
+                .get_metrics()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&metrics.to_string())])
         }
-        
+
         "cookies" => {
             let action = s("action");
             let action = if action.is_empty() { "get" } else { action };
             let br = browser.read().await;
-            
+
             match action {
                 "get" => {
                     let cookies = br.get_cookies().await.map_err(|e| e.to_string())?;
@@ -1123,106 +1471,183 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     let value = s("value");
                     let domain = s("domain");
                     drop(br);
-                    browser.read().await.set_cookie(name, value, domain).await.map_err(|e| e.to_string())?;
+                    browser
+                        .read()
+                        .await
+                        .set_cookie(name, value, domain)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     Ok(vec![text("Cookie set")])
                 }
                 "clear" => {
                     br.clear_cookies().await.map_err(|e| e.to_string())?;
                     Ok(vec![text("Cookies cleared")])
                 }
-                _ => Err("Invalid action".into())
+                _ => Err("Invalid action".into()),
             }
         }
-        
+
         "status" => {
             let status = browser.read().await.status();
             Ok(vec![text(&status.to_string())])
         }
-        
+
         "new_tab" | "new_page" => {
-            browser.write().await.new_page().await.map_err(|e| e.to_string())?;
+            browser
+                .write()
+                .await
+                .new_page()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("New page opened")])
         }
 
         "list_tab" | "list_tabs" => {
-            let tabs = browser.read().await.list_tabs().await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&json!({"count": tabs.len(), "tabs": tabs}).to_string())])
+            let tabs = browser
+                .read()
+                .await
+                .list_tabs()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(
+                &json!({"count": tabs.len(), "tabs": tabs}).to_string(),
+            )])
         }
 
         "switch_tab" => {
             let mut bw = browser.write().await;
             if let Some(index) = p("index").and_then(|v| v.as_u64()) {
-                bw.switch_tab_by_index(index as usize).map_err(|e| e.to_string())?;
+                bw.switch_tab_by_index(index as usize)
+                    .map_err(|e| e.to_string())?;
             } else if let Some(url_match) = p("url_match").and_then(|v| v.as_str()) {
-                bw.switch_tab_by_url(url_match).await.map_err(|e| e.to_string())?;
+                bw.switch_tab_by_url(url_match)
+                    .await
+                    .map_err(|e| e.to_string())?;
             } else {
                 return Err("Provide index or url_match".into());
             }
             let tabs = bw.list_tabs().await.map_err(|e| e.to_string())?;
-            let active = tabs.iter().find(|t| t.get("active").and_then(|a| a.as_bool()).unwrap_or(false));
-            let info = active.map(|t| format!("Switched to tab: {} ({})",
-                t.get("url").and_then(|v| v.as_str()).unwrap_or(""),
-                t.get("title").and_then(|v| v.as_str()).unwrap_or("")
-            )).unwrap_or_else(|| "Switched tab".into());
+            let active = tabs
+                .iter()
+                .find(|t| t.get("active").and_then(|a| a.as_bool()).unwrap_or(false));
+            let info = active
+                .map(|t| {
+                    format!(
+                        "Switched to tab: {} ({})",
+                        t.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+                        t.get("title").and_then(|v| v.as_str()).unwrap_or("")
+                    )
+                })
+                .unwrap_or_else(|| "Switched tab".into());
             Ok(vec![text(&info)])
         }
 
         "close_tab" => {
             let index = i("index", 0) as usize;
-            browser.write().await.close_tab(index).await.map_err(|e| e.to_string())?;
+            browser
+                .write()
+                .await
+                .close_tab(index)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&format!("Closed tab {}", index))])
         }
 
         "get_url" => {
-            let url = browser.read().await.get_url().await.map_err(|e| e.to_string())?;
+            let url = browser
+                .read()
+                .await
+                .get_url()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&url)])
         }
-        
+
         "back" => {
-            browser.read().await.go_back().await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .go_back()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Went back")])
         }
-        
+
         "forward" => {
-            browser.read().await.go_forward().await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .go_forward()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Went forward")])
         }
-        
+
         "reload" => {
-            browser.read().await.reload().await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .reload()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Page reloaded")])
         }
-        
+
         "get_forms" => {
-            let forms = browser.read().await.get_forms().await.map_err(|e| e.to_string())?;
+            let forms = browser
+                .read()
+                .await
+                .get_forms()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&forms.to_string())])
         }
-        
+
         "fill_form" => {
             let form_sel = s("form_selector");
             let data = p("data").cloned().unwrap_or(json!({}));
-            browser.read().await.fill_form(form_sel, &data).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .fill_form(form_sel, &data)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Form filled")])
         }
-        
+
         "submit_form" => {
             let sel = s("selector");
-            browser.read().await.submit_form(sel).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .submit_form(sel)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Form submitted")])
         }
-        
+
         "inject_script" => {
             let script = s("script");
-            browser.read().await.inject_script(script).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .inject_script(script)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Script injected")])
         }
-        
+
         "wait_idle" => {
             let timeout = i("timeout_ms", 2000) as u64;
-            browser.read().await.wait_network_idle(timeout).await.map_err(|e| e.to_string())?;
+            browser
+                .read()
+                .await
+                .wait_network_idle(timeout)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text("Network idle")])
         }
-        
+
         "http_scrape" => {
             let url = s("url");
             let (_, text_content, _) = http_scrape_text(url).await?;
@@ -1275,7 +1700,12 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     .evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
                     .await
                     .map_err(|e| e.to_string())?;
-                browser.read().await.wait_network_idle(wait_ms).await.map_err(|e| e.to_string())?;
+                browser
+                    .read()
+                    .await
+                    .wait_network_idle(wait_ms)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let new_height = browser
                     .read()
                     .await
@@ -1293,11 +1723,14 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             }
 
             let extracted = extract_page_content(browser, false, 10000).await?;
-            Ok(vec![text(&json!({
-                "scrolls_performed": scrolls_performed,
-                "final_scroll_height": last_height,
-                "extracted": extracted
-            }).to_string())])
+            Ok(vec![text(
+                &json!({
+                    "scrolls_performed": scrolls_performed,
+                    "final_scroll_height": last_height,
+                    "extracted": extracted
+                })
+                .to_string(),
+            )])
         }
 
         "wait_stable" => {
@@ -1312,7 +1745,12 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     .unwrap_or(Duration::from_millis(0))
                     .as_millis();
                 let path = format!("C:/temp/browser_stable_{}_{}.jpg", millis, attempt);
-                browser.read().await.screenshot_to_file(&path, false, 70).await.map_err(|e| e.to_string())?;
+                browser
+                    .read()
+                    .await
+                    .screenshot_to_file(&path, false, 70)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let current_size = std::fs::metadata(&path)
                     .map_err(|e| format!("stat screenshot: {}", e))?
                     .len();
@@ -1321,13 +1759,16 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     let larger = previous_size.max(current_size).max(1);
                     let diff = previous_size.abs_diff(current_size);
                     if diff * 100 <= larger * 5 {
-                        return Ok(vec![text(&json!({
-                            "stable": true,
-                            "attempts": attempt,
-                            "previous_size": previous_size,
-                            "current_size": current_size,
-                            "interval_ms": interval_ms
-                        }).to_string())]);
+                        return Ok(vec![text(
+                            &json!({
+                                "stable": true,
+                                "attempts": attempt,
+                                "previous_size": previous_size,
+                                "current_size": current_size,
+                                "interval_ms": interval_ms
+                            })
+                            .to_string(),
+                        )]);
                     }
                 }
 
@@ -1335,21 +1776,23 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 tokio::time::sleep(Duration::from_millis(interval_ms)).await;
             }
 
-            Ok(vec![text(&json!({
-                "stable": false,
-                "attempts": max_attempts,
-                "last_size": last_size,
-                "interval_ms": interval_ms
-            }).to_string())])
+            Ok(vec![text(
+                &json!({
+                    "stable": false,
+                    "attempts": max_attempts,
+                    "last_size": last_size,
+                    "interval_ms": interval_ms
+                })
+                .to_string(),
+            )])
         }
-
 
         "extract_content" => {
             let url = p("url").and_then(|v| v.as_str());
             let use_current = b("use_current", false);
             let include_links = b("include_links", false);
             let max_length = i("max_length", 10000) as usize;
-            
+
             if !use_current {
                 if let Some(u) = url {
                     // Auto-launch browser if not running
@@ -1359,7 +1802,12 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                             bw.launch(true, None).await.map_err(|e| e.to_string())?;
                         }
                     }
-                    browser.write().await.navigate(u, "load").await.map_err(|e| e.to_string())?;
+                    browser
+                        .write()
+                        .await
+                        .navigate(u, "load")
+                        .await
+                        .map_err(|e| e.to_string())?;
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 } else {
                     return Err("Provide url or set use_current=true".into());
@@ -1369,122 +1817,162 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             let parsed = extract_page_content(browser, include_links, max_length).await?;
             Ok(vec![text(&format_json_text(&parsed))])
         }
-        
+
         "agent" => {
             // DOM-based browser agent - orchestrates existing primitives
             let url = s("url");
             let headless = b("headless", true);
             let save_screenshots = b("save_screenshots", false);
             let profile_path = p("profile_path").and_then(|v| v.as_str()).map(String::from);
-            let steps = p("steps").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            
+            let steps = p("steps")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
             if save_screenshots {
                 std::fs::create_dir_all("C:/temp/agent_run").ok();
             }
-            
+
             let mut log: Vec<String> = Vec::new();
-            
+
             // Launch/attach browser
             {
                 let mut bw = browser.write().await;
                 if !bw.is_alive().await {
-                    bw.launch(headless, profile_path).await.map_err(|e| e.to_string())?;
+                    bw.launch(headless, profile_path)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     log.push("Launched browser".into());
                 }
-                bw.navigate(&url, "load").await.map_err(|e| e.to_string())?;
+                bw.navigate(url, "load").await.map_err(|e| e.to_string())?;
                 log.push(format!("Navigated to {}", url));
             }
-            
+
             // Wait for initial load
             browser.read().await.wait_network_idle(2000).await.ok();
-            
+
             for (step_idx, step) in steps.iter().enumerate() {
-                let intent = step.get("intent").and_then(|v| v.as_str()).unwrap_or("click");
-                let match_text = step.get("match_text").and_then(|v| v.as_str()).unwrap_or("");
+                let intent = step
+                    .get("intent")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("click");
+                let match_text = step
+                    .get("match_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let selector_override = step.get("selector").and_then(|v| v.as_str());
                 let data = step.get("data");
-                let timeout = step.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10000);
-                
+                let timeout = step
+                    .get("timeout_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10000);
+
                 let step_label = format!("Step {} ({}): '{}'", step_idx + 1, intent, match_text);
-                
+
                 let result: Result<String, String> = match intent {
                     "navigate" => {
                         let target = match_text;
-                        browser.write().await.navigate(target, "load").await
+                        browser
+                            .write()
+                            .await
+                            .navigate(target, "load")
+                            .await
                             .map(|t| format!("Navigated to {} ({})", target, t))
                             .map_err(|e| e.to_string())
                     }
-                    
+
                     "wait" => {
                         if let Some(sel) = selector_override {
-                            browser.read().await.wait_for(sel, timeout, true).await
+                            browser
+                                .read()
+                                .await
+                                .wait_for(sel, timeout, true)
+                                .await
                                 .map(|_| format!("Waited for selector: {}", sel))
                                 .map_err(|e| e.to_string())
                         } else {
-                            browser.read().await.wait_network_idle(timeout.min(5000)).await
+                            browser
+                                .read()
+                                .await
+                                .wait_network_idle(timeout.min(5000))
+                                .await
                                 .map(|_| "Waited for network idle".into())
                                 .map_err(|e| e.to_string())
                         }
                     }
-                    
+
                     "login" => {
                         // Find login form, fill credentials, submit
                         let br = browser.read().await;
                         let forms = br.get_forms().await.map_err(|e| e.to_string())?;
-                        
+
                         if let Some(form_data) = data.and_then(|d| d.as_object()) {
                             // Try to find a form with password field (login form heuristic)
-                            let form_idx = forms.as_array()
-                                .and_then(|arr| arr.iter().position(|f| {
-                                    f.get("fields").and_then(|fl| fl.as_array()).map_or(false, |fields| {
-                                        fields.iter().any(|f| f.get("type").and_then(|t| t.as_str()) == Some("password"))
+                            let form_idx = forms
+                                .as_array()
+                                .and_then(|arr| {
+                                    arr.iter().position(|f| {
+                                        f.get("fields").and_then(|fl| fl.as_array()).is_some_and(
+                                            |fields| {
+                                                fields.iter().any(|f| {
+                                                    f.get("type").and_then(|t| t.as_str())
+                                                        == Some("password")
+                                                })
+                                            },
+                                        )
                                     })
-                                }))
+                                })
                                 .unwrap_or(0);
-                            
+
                             let form_sel = if let Some(sel) = selector_override {
                                 sel.to_string()
                             } else {
                                 format!("form:nth-of-type({})", form_idx + 1)
                             };
-                            
+
                             // Type into each field using type_text for proper event triggering
                             for (field_name, field_val) in form_data {
                                 if let Some(val) = field_val.as_str() {
                                     // Try name first, then id
                                     let name_sel = format!("[name='{}']", field_name);
                                     let id_sel = format!("#{}", field_name);
-                                    
+
                                     // Try name, then id, then type-based fallback
-                                    if br.type_text(&name_sel, val, true).await.is_err() {
-                                        if br.type_text(&id_sel, val, true).await.is_err() {
-                                            let broad = format!("input[type='{}']", 
-                                                if field_name.contains("pass") { "password" } else { "text" });
-                                            br.type_text(&broad, val, true).await.ok();
-                                        }
+                                    if br.type_text(&name_sel, val, true).await.is_err()
+                                        && br.type_text(&id_sel, val, true).await.is_err()
+                                    {
+                                        let broad = format!(
+                                            "input[type='{}']",
+                                            if field_name.contains("pass") {
+                                                "password"
+                                            } else {
+                                                "text"
+                                            }
+                                        );
+                                        br.type_text(&broad, val, true).await.ok();
                                     }
                                 }
                             }
                             drop(br);
-                            
+
                             // Submit
                             let br2 = browser.read().await;
                             let _submit_result = br2.evaluate(&format!(
                                 "document.querySelector('{}')?.submit() || document.querySelector('button[type=submit], input[type=submit], button')?.click()",
-                                form_sel.replace("'", "\'")
+                                form_sel.replace('\'', "\\'")
                             )).await;
                             drop(br2);
-                            
+
                             // Wait for navigation
                             tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
                             browser.read().await.wait_network_idle(3000).await.ok();
-                            
+
                             Ok(format!("Login attempted via {}", form_sel))
                         } else {
                             Err("login intent requires 'data' with credentials".into())
                         }
                     }
-                    
+
                     "fill" => {
                         if let Some(form_data) = data.and_then(|d| d.as_object()) {
                             let br = browser.read().await;
@@ -1493,9 +1981,9 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                                 if let Some(val) = field_val.as_str() {
                                     let name_sel = format!("[name='{}']", field_name);
                                     let id_sel = format!("#{}", field_name);
-                                    if br.type_text(&name_sel, val, true).await.is_ok() {
-                                        filled.push(field_name.clone());
-                                    } else if br.type_text(&id_sel, val, true).await.is_ok() {
+                                    if br.type_text(&name_sel, val, true).await.is_ok()
+                                        || br.type_text(&id_sel, val, true).await.is_ok()
+                                    {
                                         filled.push(field_name.clone());
                                     }
                                 }
@@ -1505,10 +1993,14 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                             Err("fill intent requires 'data'".into())
                         }
                     }
-                    
+
                     "click" => {
                         if let Some(sel) = selector_override {
-                            browser.read().await.click_selector(sel).await
+                            browser
+                                .read()
+                                .await
+                                .click_selector(sel)
+                                .await
                                 .map(|_| format!("Clicked selector: {}", sel))
                                 .map_err(|e| e.to_string())
                         } else {
@@ -1541,71 +2033,140 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                                         };
                                     })
                             "#;
-                            let elements = browser.read().await.evaluate(script).await.map_err(|e| e.to_string())?;
-                            
+                            let elements = browser
+                                .read()
+                                .await
+                                .evaluate(script)
+                                .await
+                                .map_err(|e| e.to_string())?;
+
                             let match_lower = match_text.to_lowercase();
                             let mut best: Option<(i32, &serde_json::Value)> = None;
-                            
+
                             if let Some(arr) = elements.as_array() {
                                 for el in arr {
-                                    let fields: Vec<String> = ["text", "aria", "title", "value", "href", "id", "name", "cls"]
-                                        .iter()
-                                        .map(|k| el.get(k).and_then(|v| v.as_str()).unwrap_or("").to_lowercase())
-                                        .collect();
-                                    
-                                    let [text, aria, title, value, href, id, name, cls] = 
+                                    let fields: Vec<String> = [
+                                        "text", "aria", "title", "value", "href", "id", "name",
+                                        "cls",
+                                    ]
+                                    .iter()
+                                    .map(|k| {
+                                        el.get(k)
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_lowercase()
+                                    })
+                                    .collect();
+
+                                    let [text, aria, title, value, href, id, name, cls] =
                                         <[String; 8]>::try_from(fields).unwrap_or_default();
-                                    
+
                                     // Tiered scoring: exact > contains-primary > contains-secondary > word-match
-                                    let score = 
-                                        if text == match_lower || aria == match_lower || value == match_lower { 100 }
-                                        else if text.starts_with(&match_lower) || aria.starts_with(&match_lower) { 90 }
-                                        else if text.contains(&match_lower) { 80 }
-                                        else if aria.contains(&match_lower) || title.contains(&match_lower) { 70 }
-                                        else if href.contains(&match_lower) { 60 }
-                                        else if id.contains(&match_lower) || name.contains(&match_lower) { 50 }
-                                        else if cls.contains(&match_lower) { 40 }
-                                        else if match_lower.split_whitespace().all(|w| text.contains(w)) { 35 }
-                                        else if !text.is_empty() && match_lower.contains(&text) { 30 }
-                                        else { 0 };
-                                    
+                                    let score = if text == match_lower
+                                        || aria == match_lower
+                                        || value == match_lower
+                                    {
+                                        100
+                                    } else if text.starts_with(&match_lower)
+                                        || aria.starts_with(&match_lower)
+                                    {
+                                        90
+                                    } else if text.contains(&match_lower) {
+                                        80
+                                    } else if aria.contains(&match_lower)
+                                        || title.contains(&match_lower)
+                                    {
+                                        70
+                                    } else if href.contains(&match_lower) {
+                                        60
+                                    } else if id.contains(&match_lower)
+                                        || name.contains(&match_lower)
+                                    {
+                                        50
+                                    } else if cls.contains(&match_lower) {
+                                        40
+                                    } else if match_lower
+                                        .split_whitespace()
+                                        .all(|w| text.contains(w))
+                                    {
+                                        35
+                                    } else if !text.is_empty() && match_lower.contains(&text) {
+                                        30
+                                    } else {
+                                        0
+                                    };
+
                                     if score > best.as_ref().map_or(0, |b| b.0) {
                                         best = Some((score, el));
                                     }
                                 }
-                                
+
                                 if let Some((score, el)) = best {
-                                    let el_text = el.get("text").and_then(|v| v.as_str()).unwrap_or("?");
-                                    let cx = el.get("cx").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                                    let cy = el.get("cy").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                    let el_text =
+                                        el.get("text").and_then(|v| v.as_str()).unwrap_or("?");
+                                    let cx =
+                                        el.get("cx").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                    let cy =
+                                        el.get("cy").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                                     let br = browser.read().await;
-                                    
+
                                     // Try CSS selector first (more reliable), fall back to coords
-                                    let sel_str = el.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                                    let sel_str =
+                                        el.get("selector").and_then(|v| v.as_str()).unwrap_or("");
                                     let clicked = if !sel_str.is_empty() {
                                         br.click_selector(sel_str).await.is_ok()
-                                    } else { false };
-                                    
+                                    } else {
+                                        false
+                                    };
+
                                     if !clicked {
                                         br.click_coords(cx, cy).await.map_err(|e| e.to_string())?;
                                     }
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                                    Ok(format!("Clicked '{}' {} [score:{}]",
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(500))
+                                        .await;
+                                    Ok(format!(
+                                        "Clicked '{}' {} [score:{}]",
                                         el_text,
-                                        if clicked { format!("via {}", sel_str) } else { format!("at ({},{})", cx, cy) },
-                                        score))
+                                        if clicked {
+                                            format!("via {}", sel_str)
+                                        } else {
+                                            format!("at ({},{})", cx, cy)
+                                        },
+                                        score
+                                    ))
                                 } else {
-                                    let available: Vec<String> = arr.iter()
+                                    let available: Vec<String> = arr
+                                        .iter()
                                         .filter_map(|el| {
-                                            let t = el.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                            let a = el.get("aria").and_then(|v| v.as_str()).unwrap_or("");
-                                            let h = el.get("href").and_then(|v| v.as_str()).unwrap_or("");
-                                            let label = if !t.is_empty() { t } else if !a.is_empty() { a } else if !h.is_empty() { h } else { return None; };
+                                            let t = el
+                                                .get("text")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            let a = el
+                                                .get("aria")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            let h = el
+                                                .get("href")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            let label = if !t.is_empty() {
+                                                t
+                                            } else if !a.is_empty() {
+                                                a
+                                            } else if !h.is_empty() {
+                                                h
+                                            } else {
+                                                return None;
+                                            };
                                             Some(label.to_string())
                                         })
                                         .take(25)
                                         .collect();
-                                    Err(format!("No match for '{}'. Available: {:?}", match_text, available))
+                                    Err(format!(
+                                        "No match for '{}'. Available: {:?}",
+                                        match_text, available
+                                    ))
                                 }
                             } else {
                                 Err("Failed to scan clickable elements".into())
@@ -1613,10 +2174,13 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                         }
                     }
 
-                    
                     "select" => {
                         if let Some(sel) = selector_override {
-                            browser.read().await.select_option(sel, match_text).await
+                            browser
+                                .read()
+                                .await
+                                .select_option(sel, match_text)
+                                .await
                                 .map(|_| format!("Selected '{}' in {}", match_text, sel))
                                 .map_err(|e| e.to_string())
                         } else {
@@ -1631,9 +2195,14 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                                     }}
                                     return null;
                                 }})()"#,
-                                match_text.to_lowercase().replace("'", "\'")
+                                match_text.to_lowercase().replace('\'', "\\'")
                             );
-                            let result = browser.read().await.evaluate(&script).await.map_err(|e| e.to_string())?;
+                            let result = browser
+                                .read()
+                                .await
+                                .evaluate(&script)
+                                .await
+                                .map_err(|e| e.to_string())?;
                             if result.is_null() {
                                 Err(format!("No select option matching '{}'", match_text))
                             } else {
@@ -1641,12 +2210,16 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                             }
                         }
                     }
-                    
+
                     "extract" => {
                         let br = browser.read().await;
                         if let Some(sel) = selector_override {
                             let txt = br.get_text(sel).await.map_err(|e| e.to_string())?;
-                            Ok(format!("Extracted from {}: {}", sel, &txt[..txt.len().min(2000)]))
+                            Ok(format!(
+                                "Extracted from {}: {}",
+                                sel,
+                                &txt[..txt.len().min(2000)]
+                            ))
                         } else if match_text.to_lowercase().contains("table") {
                             // Extract tables as JSON
                             let script = r#"
@@ -1659,7 +2232,10 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                                 })
                             "#;
                             let tables = br.evaluate(script).await.map_err(|e| e.to_string())?;
-                            Ok(format!("Tables: {}", serde_json::to_string_pretty(&tables).unwrap_or_default()))
+                            Ok(format!(
+                                "Tables: {}",
+                                serde_json::to_string_pretty(&tables).unwrap_or_default()
+                            ))
                         } else if match_text.to_lowercase().contains("link") {
                             let script = r#"
                                 Array.from(document.querySelectorAll('a[href]')).slice(0, 50).map(a => ({
@@ -1668,7 +2244,10 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                                 })).filter(a => a.text)
                             "#;
                             let links = br.evaluate(script).await.map_err(|e| e.to_string())?;
-                            Ok(format!("Links: {}", serde_json::to_string_pretty(&links).unwrap_or_default()))
+                            Ok(format!(
+                                "Links: {}",
+                                serde_json::to_string_pretty(&links).unwrap_or_default()
+                            ))
                         } else {
                             // Extract visible text matching the pattern
                             let script = format!(
@@ -1681,95 +2260,135 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                                     }}
                                     return matches.slice(0, 20);
                                 }})()"#,
-                                match_text.to_lowercase().replace("'", "\'")
+                                match_text.to_lowercase().replace('\'', "\\'")
                             );
                             let result = br.evaluate(&script).await.map_err(|e| e.to_string())?;
-                            Ok(format!("Extracted: {}", serde_json::to_string_pretty(&result).unwrap_or_default()))
+                            Ok(format!(
+                                "Extracted: {}",
+                                serde_json::to_string_pretty(&result).unwrap_or_default()
+                            ))
                         }
                     }
-                    
-                    _ => Err(format!("Unknown intent: {}", intent))
+
+                    _ => Err(format!("Unknown intent: {}", intent)),
                 };
-                
+
                 match result {
                     Ok(msg) => {
                         log.push(format!("âœ“ {} â†’ {}", step_label, msg));
-                        
+
                         if save_screenshots {
                             let path = format!("C:/temp/agent_run/step_{:02}.jpg", step_idx + 1);
-                            browser.read().await.screenshot_to_file(&path, false, 60).await.ok();
+                            browser
+                                .read()
+                                .await
+                                .screenshot_to_file(&path, false, 60)
+                                .await
+                                .ok();
                         }
                     }
                     Err(e) => {
                         log.push(format!("âœ— {} â†’ ERROR: {}", step_label, e));
-                        
+
                         // Save failure screenshot
-                        let fail_path = format!("C:/temp/agent_run/fail_step_{:02}.jpg", step_idx + 1);
+                        let fail_path =
+                            format!("C:/temp/agent_run/fail_step_{:02}.jpg", step_idx + 1);
                         std::fs::create_dir_all("C:/temp/agent_run").ok();
-                        browser.read().await.screenshot_to_file(&fail_path, false, 80).await.ok();
-                        
+                        browser
+                            .read()
+                            .await
+                            .screenshot_to_file(&fail_path, false, 80)
+                            .await
+                            .ok();
+
                         // Return partial results with DOM snapshot
-                        let clickables = browser.read().await.get_clickables().await.unwrap_or_default();
-                        let available: Vec<String> = clickables.iter()
+                        let clickables = browser
+                            .read()
+                            .await
+                            .get_clickables()
+                            .await
+                            .unwrap_or_default();
+                        let available: Vec<String> = clickables
+                            .iter()
                             .filter_map(|el| el.get("text").and_then(|t| t.as_str()))
                             .filter(|t| !t.is_empty())
                             .take(30)
                             .map(|t| t.to_string())
                             .collect();
-                        
+
                         let current_url = browser.read().await.get_url().await.unwrap_or_default();
-                        
+
                         log.push(format!("ðŸ“ Stopped at: {}", current_url));
                         log.push(format!("ðŸ“¸ Screenshot: {}", fail_path));
                         log.push(format!("ðŸ” Available elements: {:?}", available));
-                        
-                        return Ok(vec![text(&json!({
-                            "status": "partial",
-                            "completed_steps": step_idx,
-                            "total_steps": steps.len(),
-                            "log": log,
-                            "current_url": current_url,
-                            "available_elements": available,
-                            "screenshot": fail_path
-                        }).to_string())]);
+
+                        return Ok(vec![text(
+                            &json!({
+                                "status": "partial",
+                                "completed_steps": step_idx,
+                                "total_steps": steps.len(),
+                                "log": log,
+                                "current_url": current_url,
+                                "available_elements": available,
+                                "screenshot": fail_path
+                            })
+                            .to_string(),
+                        )]);
                     }
                 }
             }
-            
+
             // All steps complete
             let current_url = browser.read().await.get_url().await.unwrap_or_default();
-            Ok(vec![text(&json!({
-                "status": "complete",
-                "steps_completed": steps.len(),
-                "log": log,
-                "final_url": current_url
-            }).to_string())])
+            Ok(vec![text(
+                &json!({
+                    "status": "complete",
+                    "steps_completed": steps.len(),
+                    "log": log,
+                    "final_url": current_url
+                })
+                .to_string(),
+            )])
         }
-
-
 
         "verify_visual" => {
             let expected = s("expected_text");
             let br = browser.read().await;
             let screenshot_b64 = if let Some(sel) = p("selector").and_then(|v| v.as_str()) {
-                br.screenshot_element(sel, 80).await.map_err(|e| e.to_string())?
+                br.screenshot_element(sel, 80)
+                    .await
+                    .map_err(|e| e.to_string())?
             } else {
                 br.screenshot(false, 80).await.map_err(|e| e.to_string())?
             };
-            let temp_path = format!("C:\\temp\\browser_verify_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-            let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64).map_err(|e| format!("base64 decode: {}", e))?;
+            let temp_path = format!(
+                "C:\\temp\\browser_verify_{}.png",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            );
+            let decoded =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &screenshot_b64)
+                    .map_err(|e| format!("base64 decode: {}", e))?;
             std::fs::write(&temp_path, &decoded).map_err(|e| format!("write temp: {}", e))?;
             let ocr_text = do_ocr_image(&temp_path).await;
             let _ = std::fs::remove_file(&temp_path);
             let pass = ocr_text.to_lowercase().contains(&expected.to_lowercase());
-            Ok(vec![text(&json!({"pass": pass, "expected": expected, "ocr_text": ocr_text}).to_string())])
+            Ok(vec![text(
+                &json!({"pass": pass, "expected": expected, "ocr_text": ocr_text}).to_string(),
+            )])
         }
 
-
-
         "iframe_extract" => {
-            let target_idx = params.get("target_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-            let include_all = params.get("include_all").and_then(|v| v.as_bool()).unwrap_or(false);
+            let target_idx = params
+                .get("target_index")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let include_all = params
+                .get("include_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let br = browser.read().await;
             let script = r#"
                 (() => {
@@ -1786,10 +2405,15 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             "#;
             let result = br.evaluate(script).await.map_err(|e| e.to_string())?;
             let result_str = result.as_str().unwrap_or(&result.to_string()).to_string();
-            let cleaned = result_str.trim_matches('"').replace("\\\"", "\"").replace("\\n", "\n");
+            let cleaned = result_str
+                .trim_matches('"')
+                .replace("\\\"", "\"")
+                .replace("\\n", "\n");
             if let Ok(frames) = serde_json::from_str::<Vec<serde_json::Value>>(&cleaned) {
                 if include_all {
-                    Ok(vec![text(&serde_json::json!({"iframes": frames, "count": frames.len()}).to_string())])
+                    Ok(vec![text(
+                        &serde_json::json!({"iframes": frames, "count": frames.len()}).to_string(),
+                    )])
                 } else {
                     let idx = target_idx.unwrap_or(0);
                     if let Some(frame) = frames.get(idx) {
@@ -1804,17 +2428,27 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
         }
 
         "bulk_extract" => {
-            let urls: Vec<String> = params.get("urls")
+            let urls: Vec<String> = params
+                .get("urls")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
-            let max_len = params.get("max_length_per_page").and_then(|v| v.as_u64()).unwrap_or(5000) as usize;
+            let max_len = params
+                .get("max_length_per_page")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5000) as usize;
             let selector = params.get("selector").and_then(|v| v.as_str());
             let mut results: Vec<serde_json::Value> = Vec::new();
             let start = std::time::Instant::now();
             for url in &urls {
                 let (mut extracted, tier) = smart_extract(url, selector).await;
-                if extracted.len() > max_len { extracted.truncate(max_len); }
+                if extracted.len() > max_len {
+                    extracted.truncate(max_len);
+                }
                 results.push(serde_json::json!({"url": url, "text": extracted, "length": extracted.len(), "tier": tier}));
             }
             let elapsed = start.elapsed().as_millis();
@@ -1822,20 +2456,26 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
         }
         "assemble" => {
             let result = crate::planner::assemble(&params);
-            Ok(vec![text(&serde_json::to_string_pretty(&result).unwrap_or_default())])
+            Ok(vec![text(
+                &serde_json::to_string_pretty(&result).unwrap_or_default(),
+            )])
         }
         "plan" => {
             let result = crate::planner::plan(&params);
-            Ok(vec![text(&serde_json::to_string_pretty(&result).unwrap_or_default())])
+            Ok(vec![text(
+                &serde_json::to_string_pretty(&result).unwrap_or_default(),
+            )])
         }
 
         // ===== P4: Script Batching =====
         "script" => {
-            let steps: Vec<serde_json::Value> = params.get("steps")
+            let steps: Vec<serde_json::Value> = params
+                .get("steps")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let vars: serde_json::Map<String, serde_json::Value> = params.get("vars")
+            let vars: serde_json::Map<String, serde_json::Value> = params
+                .get("vars")
                 .and_then(|v| v.as_object())
                 .cloned()
                 .unwrap_or_default();
@@ -1847,7 +2487,10 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             }
 
             // Variable substitution function
-            fn substitute_vars(val: &serde_json::Value, vars: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+            fn substitute_vars(
+                val: &serde_json::Value,
+                vars: &serde_json::Map<String, serde_json::Value>,
+            ) -> serde_json::Value {
                 match val {
                     serde_json::Value::String(s) => {
                         let mut result = s.clone();
@@ -1868,9 +2511,9 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                         }
                         serde_json::Value::Object(new_map)
                     }
-                    serde_json::Value::Array(arr) => {
-                        serde_json::Value::Array(arr.iter().map(|v| substitute_vars(v, vars)).collect())
-                    }
+                    serde_json::Value::Array(arr) => serde_json::Value::Array(
+                        arr.iter().map(|v| substitute_vars(v, vars)).collect(),
+                    ),
                     other => other.clone(),
                 }
             }
@@ -1891,7 +2534,11 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 // Trace logging if active
                 {
                     let mut bm_trace = browser.write().await;
-                    bm_trace.trace_log("script_step", tool_name, Some(json!({"step": step_idx + 1, "params": &resolved_params})));
+                    bm_trace.trace_log(
+                        "script_step",
+                        tool_name,
+                        Some(json!({"step": step_idx + 1, "params": &resolved_params})),
+                    );
                 }
 
                 let step_start = Instant::now();
@@ -1900,10 +2547,13 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
 
                 match result {
                     Ok(content) => {
-                        let output: Vec<String> = content.iter().map(|c| match c {
-                            ToolContent::Text { text: t } => t.clone(),
-                            _ => "[non-text]".into(),
-                        }).collect();
+                        let output: Vec<String> = content
+                            .iter()
+                            .map(|c| match c {
+                                ToolContent::Text { text: t } => t.clone(),
+                                _ => "[non-text]".into(),
+                            })
+                            .collect();
                         log.push(json!({
                             "step": step_idx + 1,
                             "tool": tool_name,
@@ -1922,19 +2572,29 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                         }));
                         if stop_on_error {
                             // Save failure screenshot
-                            let fail_path = format!("C:/temp/script_run/fail_step_{:02}.jpg", step_idx + 1);
+                            let fail_path =
+                                format!("C:/temp/script_run/fail_step_{:02}.jpg", step_idx + 1);
                             std::fs::create_dir_all("C:/temp/script_run").ok();
-                            browser.read().await.screenshot_to_file(&fail_path, false, 80).await.ok();
-                            let current_url = browser.read().await.get_url().await.unwrap_or_default();
-                            return Ok(vec![text(&json!({
-                                "status": "partial",
-                                "completed": step_idx,
-                                "total": steps.len(),
-                                "elapsed_ms": script_start.elapsed().as_millis() as u64,
-                                "log": log,
-                                "current_url": current_url,
-                                "screenshot": fail_path
-                            }).to_string())]);
+                            browser
+                                .read()
+                                .await
+                                .screenshot_to_file(&fail_path, false, 80)
+                                .await
+                                .ok();
+                            let current_url =
+                                browser.read().await.get_url().await.unwrap_or_default();
+                            return Ok(vec![text(
+                                &json!({
+                                    "status": "partial",
+                                    "completed": step_idx,
+                                    "total": steps.len(),
+                                    "elapsed_ms": script_start.elapsed().as_millis() as u64,
+                                    "log": log,
+                                    "current_url": current_url,
+                                    "screenshot": fail_path
+                                })
+                                .to_string(),
+                            )]);
                         }
                     }
                 }
@@ -1945,27 +2605,38 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             }
 
             let current_url = browser.read().await.get_url().await.unwrap_or_default();
-            Ok(vec![text(&json!({
-                "status": "complete",
-                "steps_completed": steps.len(),
-                "elapsed_ms": script_start.elapsed().as_millis() as u64,
-                "log": log,
-                "final_url": current_url
-            }).to_string())])
+            Ok(vec![text(
+                &json!({
+                    "status": "complete",
+                    "steps_completed": steps.len(),
+                    "elapsed_ms": script_start.elapsed().as_millis() as u64,
+                    "log": log,
+                    "final_url": current_url
+                })
+                .to_string(),
+            )])
         }
 
         // ===== P1: Network Interception =====
         "route" => {
             let pattern = s("pattern").to_string();
             let action_str = s("action");
-            let action_str = if action_str.is_empty() { "log" } else { action_str };
+            let action_str = if action_str.is_empty() {
+                "log"
+            } else {
+                action_str
+            };
 
             let action = match action_str {
                 "block" => RouteAction::Block,
                 "mock" => {
                     let status = i("mock_status", 200) as u16;
                     let content_type = s("mock_content_type");
-                    let content_type = if content_type.is_empty() { "application/json" } else { content_type };
+                    let content_type = if content_type.is_empty() {
+                        "application/json"
+                    } else {
+                        content_type
+                    };
                     let body = s("mock_body").to_string();
                     RouteAction::Mock {
                         status,
@@ -1976,29 +2647,53 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 _ => RouteAction::Log,
             };
 
-            let result = browser.write().await.add_route(pattern, action).await.map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .add_route(pattern, action)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "route_remove" => {
             let pattern = s("pattern");
-            let result = browser.write().await.remove_route(pattern).map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .remove_route(pattern)
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "route_list" => {
             let routes = browser.read().await.list_routes();
-            Ok(vec![text(&json!({"routes": routes, "count": routes.len()}).to_string())])
+            Ok(vec![text(
+                &json!({"routes": routes, "count": routes.len()}).to_string(),
+            )])
         }
         "route_clear" => {
-            let result = browser.write().await.disable_interception().await.map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .disable_interception()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "get_network_log" => {
             let do_clear = b("clear", false);
             let bm_read = browser.read().await;
-            let log = bm_read.get_intercepted_requests().await.map_err(|e| e.to_string())?;
+            let log = bm_read
+                .get_intercepted_requests()
+                .await
+                .map_err(|e| e.to_string())?;
             if do_clear {
                 drop(bm_read);
-                browser.read().await.clear_intercepted().await.map_err(|e| e.to_string())?;
+                browser
+                    .read()
+                    .await
+                    .clear_intercepted()
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
             Ok(vec![text(&log.to_string())])
         }
@@ -2007,17 +2702,31 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
         "context_create" => {
             let name = s("name").to_string();
             let url = p("url").and_then(|v| v.as_str());
-            let result = browser.write().await.create_context(&name, url).await.map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .create_context(&name, url)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "context_switch" => {
             let name = s("name");
-            let result = browser.write().await.switch_context(name).map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .switch_context(name)
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "context_destroy" => {
             let name = s("name");
-            let result = browser.write().await.destroy_context(name).await.map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .destroy_context(name)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "context_list" => {
@@ -2027,16 +2736,33 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
 
         // ===== P2: Trace Recording =====
         "trace_start" => {
-            let result = browser.write().await.trace_start().await.map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .trace_start()
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
         "trace_stop" => {
-            let trace = browser.write().await.trace_stop().await.map_err(|e| e.to_string())?;
-            Ok(vec![text(&serde_json::to_string_pretty(&trace).unwrap_or_default())])
+            let trace = browser
+                .write()
+                .await
+                .trace_stop()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(vec![text(
+                &serde_json::to_string_pretty(&trace).unwrap_or_default(),
+            )])
         }
         "trace_save" => {
             let path = s("path");
-            let result = browser.write().await.trace_save(path).await.map_err(|e| e.to_string())?;
+            let result = browser
+                .write()
+                .await
+                .trace_save(path)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(vec![text(&result)])
         }
 
@@ -2053,18 +2779,28 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             let eval_start = Instant::now();
 
             // Create evidence directory
-            let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             let evidence_dir = format!("C:/temp/eval_{}", ts);
             if evidence {
                 std::fs::create_dir_all(&evidence_dir).ok();
             }
 
             // Navigate to target
-            Box::pin(handle_tool_inner(browser, "navigate", json!({"url": target}))).await
-                .map_err(|e| format!("Navigate to target failed: {}", e))?;
+            Box::pin(handle_tool_inner(
+                browser,
+                "navigate",
+                json!({"url": target}),
+            ))
+            .await
+            .map_err(|e| format!("Navigate to target failed: {}", e))?;
 
             // Wait for page load
-            Box::pin(handle_tool_inner(browser, "wait_idle", json!({}))).await.ok();
+            Box::pin(handle_tool_inner(browser, "wait_idle", json!({})))
+                .await
+                .ok();
 
             // If no spec: auto-discovery mode
             if spec.is_empty() {
@@ -2083,15 +2819,26 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     title: document.title
                 })"#;
                 let metrics_val = br.evaluate(metrics_js).await.ok();
-                let metrics_str = metrics_val.as_ref()
+                let metrics_str = metrics_val
+                    .as_ref()
                     .and_then(|v| v.as_str())
                     .unwrap_or("{}");
-                let metrics: serde_json::Value = serde_json::from_str(metrics_str).unwrap_or(json!({}));
+                let metrics: serde_json::Value =
+                    serde_json::from_str(metrics_str).unwrap_or(json!({}));
 
-                let ready_state = metrics.get("readyState").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let ready_state = metrics
+                    .get("readyState")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let page_title = metrics.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                let page_url = metrics.get("url").and_then(|v| v.as_str()).unwrap_or(&target);
-                let element_count = metrics.get("elementCount").and_then(|v| v.as_u64()).unwrap_or(0);
+                let page_url = metrics
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&target);
+                let element_count = metrics
+                    .get("elementCount")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
 
                 let page_loaded = ready_state == "complete" || ready_state == "interactive";
                 auto_checks.push(json!({
@@ -2111,7 +2858,10 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     var els = document.querySelectorAll('.error, [class*=error], [class*=Error], [role=alert]');
                     return els.length;
                 })()"#;
-                let error_count = br.evaluate(error_js).await.ok()
+                let error_count = br
+                    .evaluate(error_js)
+                    .await
+                    .ok()
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
                 let no_errors = error_count == 0;
@@ -2125,12 +2875,20 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     Array.from(document.images).filter(function(img){return !img.complete || img.naturalWidth === 0})
                     .map(function(img){return {src: img.src, alt: img.alt || '(no alt)'}})
                 )"#;
-                let broken_imgs_str = br.evaluate(broken_img_js).await.ok()
+                let broken_imgs_str = br
+                    .evaluate(broken_img_js)
+                    .await
+                    .ok()
                     .and_then(|v| v.as_str().map(|s| s.to_string()))
                     .unwrap_or("[]".into());
-                let broken_imgs: Vec<serde_json::Value> = serde_json::from_str(&broken_imgs_str).unwrap_or_default();
-                let total_imgs = br.evaluate("document.images.length").await.ok()
-                    .and_then(|v| v.as_u64()).unwrap_or(0);
+                let broken_imgs: Vec<serde_json::Value> =
+                    serde_json::from_str(&broken_imgs_str).unwrap_or_default();
+                let total_imgs = br
+                    .evaluate("document.images.length")
+                    .await
+                    .ok()
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 let imgs_ok = broken_imgs.is_empty();
                 auto_checks.push(json!({
                     "check": "no_broken_images", "passed": imgs_ok,
@@ -2142,10 +2900,14 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                     Array.from(document.querySelectorAll('a')).filter(function(a){return !a.href || a.href === '' || a.href === window.location.href + '#'})
                     .map(function(a){return {text: a.textContent.trim().slice(0,50), href: a.href || '(none)'}})
                 )"#;
-                let bad_links_str = br.evaluate(bad_links_js).await.ok()
+                let bad_links_str = br
+                    .evaluate(bad_links_js)
+                    .await
+                    .ok()
                     .and_then(|v| v.as_str().map(|s| s.to_string()))
                     .unwrap_or("[]".into());
-                let bad_links: Vec<serde_json::Value> = serde_json::from_str(&bad_links_str).unwrap_or_default();
+                let bad_links: Vec<serde_json::Value> =
+                    serde_json::from_str(&bad_links_str).unwrap_or_default();
                 let links_ok = bad_links.is_empty();
                 auto_checks.push(json!({
                     "check": "links_valid", "passed": links_ok,
@@ -2162,19 +2924,26 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                         return !hasLabel && !hasAriaLabel && !hasPlaceholder;
                     }).map(function(el){return {type: el.type || el.tagName.toLowerCase(), name: el.name || '(unnamed)'}})
                 )"#;
-                let unlabeled_str = br.evaluate(unlabeled_js).await.ok()
+                let unlabeled_str = br
+                    .evaluate(unlabeled_js)
+                    .await
+                    .ok()
                     .and_then(|v| v.as_str().map(|s| s.to_string()))
                     .unwrap_or("[]".into());
-                let unlabeled: Vec<serde_json::Value> = serde_json::from_str(&unlabeled_str).unwrap_or_default();
+                let unlabeled: Vec<serde_json::Value> =
+                    serde_json::from_str(&unlabeled_str).unwrap_or_default();
                 let inputs_labeled = unlabeled.is_empty();
                 let unlabeled_detail = if unlabeled.is_empty() {
                     "all labeled".to_string()
                 } else {
-                    let items: Vec<String> = unlabeled.iter().map(|u| {
-                        let t = u.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-                        let n = u.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                        format!("(type={}, name={})", t, n)
-                    }).collect();
+                    let items: Vec<String> = unlabeled
+                        .iter()
+                        .map(|u| {
+                            let t = u.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+                            let n = u.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            format!("(type={}, name={})", t, n)
+                        })
+                        .collect();
                     format!("{} unlabeled: {}", unlabeled.len(), items.join(", "))
                 };
                 auto_checks.push(json!({
@@ -2186,12 +2955,17 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 drop(br);
 
                 // 7. Get a11y snapshot for interactive element counts
-                let snapshot = Box::pin(handle_tool_inner(browser, "get_clickables", json!({}))).await
+                let snapshot = Box::pin(handle_tool_inner(browser, "get_clickables", json!({})))
+                    .await
                     .unwrap_or_else(|_| vec![text("(snapshot unavailable)")]);
-                let snapshot_text: String = snapshot.iter().map(|c| match c {
-                    ToolContent::Text { text: t } => t.clone(),
-                    _ => String::new(),
-                }).collect::<Vec<_>>().join("\n");
+                let snapshot_text: String = snapshot
+                    .iter()
+                    .map(|c| match c {
+                        ToolContent::Text { text: t } => t.clone(),
+                        _ => String::new(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
                 // Count interactive elements from snapshot text
                 let count_role = |role: &str| -> u32 {
@@ -2200,21 +2974,37 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 };
                 let buttons = count_role("button");
                 let links = count_role("link");
-                let inputs = count_role("textbox") + count_role("combobox") + count_role("searchbox");
+                let inputs =
+                    count_role("textbox") + count_role("combobox") + count_role("searchbox");
                 let checkboxes = count_role("checkbox") + count_role("radio");
                 let interactive_total = buttons + links + inputs + checkboxes;
 
                 let a11y_parts: Vec<String> = [
-                    (buttons, "buttons"), (links, "links"), (inputs, "inputs"),
+                    (buttons, "buttons"),
+                    (links, "links"),
+                    (inputs, "inputs"),
                     (checkboxes, "checkboxes"),
-                ].iter().filter(|(n, _)| *n > 0).map(|(n, label)| format!("{} {}", n, label)).collect();
-                let a11y_summary = if a11y_parts.is_empty() { "no interactive elements".into() } else { a11y_parts.join(", ") };
+                ]
+                .iter()
+                .filter(|(n, _)| *n > 0)
+                .map(|(n, label)| format!("{} {}", n, label))
+                .collect();
+                let a11y_summary = if a11y_parts.is_empty() {
+                    "no interactive elements".into()
+                } else {
+                    a11y_parts.join(", ")
+                };
 
                 // 8. Screenshot
                 let mut screenshot_path = String::new();
                 if evidence {
                     let path = format!("{}/initial.jpg", evidence_dir);
-                    browser.read().await.screenshot_to_file(&path, false, 80).await.ok();
+                    browser
+                        .read()
+                        .await
+                        .screenshot_to_file(&path, false, 80)
+                        .await
+                        .ok();
                     screenshot_path = path;
                 }
 
@@ -2275,10 +3065,14 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
 
                 let step_ok = step_result.is_ok();
                 let step_output = match &step_result {
-                    Ok(content) => content.iter().map(|c| match c {
-                        ToolContent::Text { text: t } => t.clone(),
-                        _ => "[non-text]".into(),
-                    }).collect::<Vec<_>>().join("\n"),
+                    Ok(content) => content
+                        .iter()
+                        .map(|c| match c {
+                            ToolContent::Text { text: t } => t.clone(),
+                            _ => "[non-text]".into(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                     Err(e) => format!("Error: {}", e),
                 };
 
@@ -2290,32 +3084,68 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 let mut assert_target = String::new();
 
                 if let Some(assert) = assert_def {
-                    assert_type = assert.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    assert_target = assert.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    expected_str = assert.get("expected").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    assert_type = assert
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    assert_target = assert
+                        .get("target")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    expected_str = assert
+                        .get("expected")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
                     match assert_type.as_str() {
                         "text_contains" => {
-                            let get_result = Box::pin(handle_tool_inner(browser, "get_text", json!({"selector": assert_target}))).await;
+                            let get_result = Box::pin(handle_tool_inner(
+                                browser,
+                                "get_text",
+                                json!({"selector": assert_target}),
+                            ))
+                            .await;
                             actual_str = match &get_result {
-                                Ok(c) => c.iter().filter_map(|c| match c {
-                                    ToolContent::Text { text: t } => Some(t.clone()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(""),
-                                Err(e) => { check_passed = false; format!("Error: {}", e) }
+                                Ok(c) => c
+                                    .iter()
+                                    .filter_map(|c| match c {
+                                        ToolContent::Text { text: t } => Some(t.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(""),
+                                Err(e) => {
+                                    check_passed = false;
+                                    format!("Error: {}", e)
+                                }
                             };
                             if check_passed {
                                 check_passed = actual_str.contains(&expected_str);
                             }
                         }
                         "element_exists" => {
-                            let exists_result = Box::pin(handle_tool_inner(browser, "exists", json!({"selector": assert_target}))).await;
+                            let exists_result = Box::pin(handle_tool_inner(
+                                browser,
+                                "exists",
+                                json!({"selector": assert_target}),
+                            ))
+                            .await;
                             actual_str = match &exists_result {
-                                Ok(c) => c.iter().filter_map(|c| match c {
-                                    ToolContent::Text { text: t } => Some(t.clone()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(""),
-                                Err(e) => { check_passed = false; format!("Error: {}", e) }
+                                Ok(c) => c
+                                    .iter()
+                                    .filter_map(|c| match c {
+                                        ToolContent::Text { text: t } => Some(t.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(""),
+                                Err(e) => {
+                                    check_passed = false;
+                                    format!("Error: {}", e)
+                                }
                             };
                             if check_passed {
                                 // exists handler returns JSON with {"exists": true/false}
@@ -2324,13 +3154,25 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                             expected_str = "element exists".to_string();
                         }
                         "value_equals" => {
-                            let get_result = Box::pin(handle_tool_inner(browser, "get_text", json!({"selector": assert_target}))).await;
+                            let get_result = Box::pin(handle_tool_inner(
+                                browser,
+                                "get_text",
+                                json!({"selector": assert_target}),
+                            ))
+                            .await;
                             actual_str = match &get_result {
-                                Ok(c) => c.iter().filter_map(|c| match c {
-                                    ToolContent::Text { text: t } => Some(t.clone()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(""),
-                                Err(e) => { check_passed = false; format!("Error: {}", e) }
+                                Ok(c) => c
+                                    .iter()
+                                    .filter_map(|c| match c {
+                                        ToolContent::Text { text: t } => Some(t.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(""),
+                                Err(e) => {
+                                    check_passed = false;
+                                    format!("Error: {}", e)
+                                }
                             };
                             if check_passed {
                                 check_passed = actual_str.trim() == expected_str.trim();
@@ -2346,11 +3188,20 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
                 let mut screenshot_path = String::new();
                 if evidence {
                     let path = format!("{}/step_{:02}.jpg", evidence_dir, step_idx + 1);
-                    browser.read().await.screenshot_to_file(&path, false, 80).await.ok();
+                    browser
+                        .read()
+                        .await
+                        .screenshot_to_file(&path, false, 80)
+                        .await
+                        .ok();
                     screenshot_path = path;
                 }
 
-                if check_passed { passed_count += 1; } else { failed_count += 1; }
+                if check_passed {
+                    passed_count += 1;
+                } else {
+                    failed_count += 1;
+                }
 
                 checks.push(json!({
                     "step": step_idx + 1,
@@ -2365,41 +3216,59 @@ async fn handle_tool_inner(browser: &SharedBrowser, name: &str, params: serde_js
             }
 
             let total = passed_count + failed_count;
-            let result_str = if failed_count == 0 { "pass" } else if passed_count == 0 { "fail" } else { "partial" };
+            let result_str = if failed_count == 0 {
+                "pass"
+            } else if passed_count == 0 {
+                "fail"
+            } else {
+                "partial"
+            };
 
             // Build failure summary
-            let failures: Vec<String> = checks.iter()
+            let failures: Vec<String> = checks
+                .iter()
                 .filter(|c| c.get("passed").and_then(|v| v.as_bool()) == Some(false))
                 .map(|c| {
                     let step = c.get("step").and_then(|v| v.as_u64()).unwrap_or(0);
                     let target = c.get("target").and_then(|v| v.as_str()).unwrap_or("");
                     let expected = c.get("expected").and_then(|v| v.as_str()).unwrap_or("");
                     let actual = c.get("actual").and_then(|v| v.as_str()).unwrap_or("");
-                    format!("step {}: {} expected '{}' got '{}'", step, target, expected, actual)
+                    format!(
+                        "step {}: {} expected '{}' got '{}'",
+                        step, target, expected, actual
+                    )
                 })
                 .collect();
 
             let summary = if failed_count == 0 {
                 format!("{}/{} checks passed.", total, total)
             } else {
-                format!("{}/{} checks passed. Failed: {}", passed_count, total, failures.join("; "))
+                format!(
+                    "{}/{} checks passed. Failed: {}",
+                    passed_count,
+                    total,
+                    failures.join("; ")
+                )
             };
 
-            Ok(vec![text(&json!({
-                "result": result_str,
-                "target": target,
-                "intent": intent,
-                "total_checks": total,
-                "passed": passed_count,
-                "failed": failed_count,
-                "checks": checks,
-                "evidence_dir": evidence_dir,
-                "duration_ms": eval_start.elapsed().as_millis() as u64,
-                "summary": summary
-            }).to_string())])
+            Ok(vec![text(
+                &json!({
+                    "result": result_str,
+                    "target": target,
+                    "intent": intent,
+                    "total_checks": total,
+                    "passed": passed_count,
+                    "failed": failed_count,
+                    "checks": checks,
+                    "evidence_dir": evidence_dir,
+                    "duration_ms": eval_start.elapsed().as_millis() as u64,
+                    "summary": summary
+                })
+                .to_string(),
+            )])
         }
 
-        _ => Err(format!("Unknown tool: {}", name))
+        _ => Err(format!("Unknown tool: {}", name)),
     }
 }
 

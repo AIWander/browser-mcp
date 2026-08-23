@@ -1,16 +1,16 @@
 //! Browser manager - chromiumoxide wrapper with extras
-// NAV: TOC at line 1356 | 3 fn | 3 struct | 2026-04-14
+// NAV: TOC at line 1623 | 3 fn | 3 struct | 2026-04-14
 use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::cdp::browser_protocol::input::{DispatchKeyEventParams, DispatchKeyEventType};
+use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::Page;
 use futures::StreamExt;
+use serde_json;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 use std::fmt;
 use std::process::Command;
-use serde_json;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 #[derive(Debug)]
@@ -50,7 +50,11 @@ pub enum RouteAction {
     /// Block the request entirely
     Block,
     /// Return a mock response
-    Mock { status: u16, content_type: String, body: String },
+    Mock {
+        status: u16,
+        content_type: String,
+        body: String,
+    },
     /// Just log the request (passthrough)
     Log,
 }
@@ -99,6 +103,12 @@ fn is_pid_alive(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{}", pid)).exists()
 }
 
+impl Default for BrowserManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BrowserManager {
     pub fn new() -> Self {
         Self {
@@ -119,7 +129,11 @@ impl BrowserManager {
     /// Launch Chrome with remote debugging enabled - for authenticated sessions
     /// This starts YOUR Chrome (with all your logins), then you use browser_attach to connect.
     /// When `wait_for_cdp` is true (default), polls the CDP endpoint until Chrome is ready.
-    pub async fn debug_launch(port: u16, url: Option<&str>, wait_for_cdp: bool) -> Result<String, BrowserError> {
+    pub async fn debug_launch(
+        port: u16,
+        url: Option<&str>,
+        wait_for_cdp: bool,
+    ) -> Result<String, BrowserError> {
         // Find Chrome — cross-platform. Non-existent paths are filtered by .exists(),
         // so listing every OS's candidates is safe; the first that exists wins.
         let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
@@ -131,7 +145,10 @@ impl BrowserManager {
             format!(r"{}\Google\Chrome\Application\chrome.exe", localappdata),
             // macOS (Chrome, then Chromium / Edge / Brave as Chromium-family fallbacks)
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string(),
-            format!("{}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", home),
+            format!(
+                "{}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                home
+            ),
             "/Applications/Chromium.app/Contents/MacOS/Chromium".to_string(),
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge".to_string(),
             "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser".to_string(),
@@ -163,17 +180,21 @@ impl BrowserManager {
         // Launch Chrome with debug port + isolated profile
         let mut cmd = Command::new(chrome_path);
         cmd.arg(format!("--remote-debugging-port={}", port))
-           .arg(format!("--user-data-dir={}", debug_profile))
-           .arg("--no-first-run")
-           .arg("--no-default-browser-check")
-           .arg(target_url);
+            .arg(format!("--user-data-dir={}", debug_profile))
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg(target_url);
 
-        let child = cmd.spawn()
+        let child = cmd
+            .spawn()
             .map_err(|e| BrowserError::ProcessError(format!("Failed to launch Chrome: {}", e)))?;
         let pid = child.id();
 
         if !wait_for_cdp {
-            return Ok(format!("Chrome launched with debug port {}. URL: {}. Use browser_attach({}) to connect.", port, target_url, port));
+            return Ok(format!(
+                "Chrome launched with debug port {}. URL: {}. Use browser_attach({}) to connect.",
+                port, target_url, port
+            ));
         }
 
         // Poll CDP endpoint until Chrome is ready
@@ -195,14 +216,18 @@ impl BrowserManager {
             if elapsed >= deadline {
                 return Err(BrowserError::Timeout(format!(
                     "Chrome did not start CDP on port {} after {}ms (process alive: {})",
-                    port, elapsed.as_millis(), process_alive
+                    port,
+                    elapsed.as_millis(),
+                    process_alive
                 )));
             }
 
             if !process_alive {
                 return Err(BrowserError::ProcessError(format!(
                     "Chrome process (pid {}) died before CDP was ready on port {} (after {}ms)",
-                    pid, port, elapsed.as_millis()
+                    pid,
+                    port,
+                    elapsed.as_millis()
                 )));
             }
 
@@ -228,26 +253,32 @@ impl BrowserManager {
     /// Connect to an existing Chrome instance via CDP
     pub async fn attach(&mut self, port: u16) -> Result<String, BrowserError> {
         let url = format!("http://localhost:{}", port);
-        
+
         let (browser, mut handler) = Browser::connect(&url)
             .await
             .map_err(|e| BrowserError::Cdp(format!("Connect to {} failed: {}", url, e)))?;
-        
-        tokio::spawn(async move {
-            while let Some(_) = handler.next().await {}
-        });
-        
+
+        tokio::spawn(async move { while handler.next().await.is_some() {} });
+
         // Get existing pages or create new one
-        let existing_pages = browser.pages().await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        let existing_pages = browser
+            .pages()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         let mut all_pages: Vec<Page> = existing_pages.into_iter().collect();
         if all_pages.is_empty() {
-            let page = browser.new_page("about:blank")
+            let page = browser
+                .new_page("about:blank")
                 .await
                 .map_err(|e| BrowserError::Cdp(e.to_string()))?;
             all_pages.push(page);
         }
 
-        let current_url = all_pages[0].url().await.unwrap_or_default().unwrap_or_default();
+        let current_url = all_pages[0]
+            .url()
+            .await
+            .unwrap_or_default()
+            .unwrap_or_default();
 
         self.browser = Some(browser);
         self.pages = all_pages;
@@ -258,17 +289,21 @@ impl BrowserManager {
         Ok(current_url)
     }
 
-    pub async fn launch(&mut self, headless: bool, profile_path: Option<String>) -> Result<(), BrowserError> {
+    pub async fn launch(
+        &mut self,
+        headless: bool,
+        profile_path: Option<String>,
+    ) -> Result<(), BrowserError> {
         let mut builder = BrowserConfig::builder();
-        
+
         if headless {
             builder = builder.arg("--headless=new");
         }
-        
+
         if let Some(profile) = profile_path {
             builder = builder.arg(format!("--user-data-dir={}", profile));
         }
-        
+
         builder = builder
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--no-first-run")
@@ -287,18 +322,19 @@ impl BrowserManager {
                 builder = builder.arg("--no-sandbox");
             }
         }
-        
-        let config = builder.build().map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
+
+        let config = builder
+            .build()
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
         let (browser, mut handler) = Browser::launch(config)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
-        tokio::spawn(async move {
-            while let Some(_) = handler.next().await {}
-        });
-        
-        let page = browser.new_page("about:blank")
+
+        tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+        let page = browser
+            .new_page("about:blank")
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
@@ -342,26 +378,33 @@ impl BrowserManager {
     }
 
     fn page(&self) -> Result<&Page, BrowserError> {
-        self.pages.get(self.active_page_index).ok_or(BrowserError::NoPage)
+        self.pages
+            .get(self.active_page_index)
+            .ok_or(BrowserError::NoPage)
     }
 
     pub async fn navigate(&mut self, url: &str, _wait_until: &str) -> Result<String, BrowserError> {
         self.current_url = url.to_string();
-        
+
         let page = self.page()?;
         page.goto(url)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
+
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
-        let title = page.get_title().await.unwrap_or_default().unwrap_or_default();
+
+        let title = page
+            .get_title()
+            .await
+            .unwrap_or_default()
+            .unwrap_or_default();
         Ok(title)
     }
 
     pub async fn click_selector(&self, selector: &str) -> Result<(), BrowserError> {
         let page = self.page()?;
-        let el = page.find_element(selector)
+        let el = page
+            .find_element(selector)
             .await
             .map_err(|_| BrowserError::ElementNotFound(selector.into()))?;
         // Wrap click in timeout: if the click triggers cross-origin navigation,
@@ -375,23 +418,29 @@ impl BrowserManager {
     }
 
     pub async fn click_coords(&self, x: i32, y: i32) -> Result<(), BrowserError> {
-        let script = format!(
-            "document.elementFromPoint({}, {})?.click()",
-            x, y
-        );
+        let script = format!("document.elementFromPoint({}, {})?.click()", x, y);
         // Wrap in timeout: JS click may trigger navigation that blocks evaluate
         match tokio::time::timeout(Duration::from_secs(5), self.evaluate(&script)).await {
-            Ok(result) => { result?; Ok(()) }
+            Ok(result) => {
+                result?;
+                Ok(())
+            }
             Err(_) => Ok(()), // timeout after click dispatched = navigation side-effect
         }
     }
 
-    pub async fn type_text(&self, selector: &str, text: &str, clear: bool) -> Result<(), BrowserError> {
+    pub async fn type_text(
+        &self,
+        selector: &str,
+        text: &str,
+        clear: bool,
+    ) -> Result<(), BrowserError> {
         let page = self.page()?;
-        let el = page.find_element(selector)
+        let el = page
+            .find_element(selector)
             .await
             .map_err(|_| BrowserError::ElementNotFound(selector.into()))?;
-        
+
         if clear {
             let clear_script = format!(
                 "document.querySelector('{}').value = ''",
@@ -399,14 +448,16 @@ impl BrowserManager {
             );
             self.evaluate(&clear_script).await.ok();
         }
-        
-        el.type_str(text).await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
+        el.type_str(text)
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         Ok(())
     }
 
     pub async fn press_key(&self, key: &str) -> Result<(), BrowserError> {
         let page = self.page()?;
-        
+
         // Map common key names to CDP key codes
         let (key_code, _text) = match key.to_lowercase().as_str() {
             "enter" | "return" => ("Enter", "\r"),
@@ -421,78 +472,106 @@ impl BrowserManager {
             "space" => ("Space", " "),
             _ => (key, key),
         };
-        
+
         // Send keydown
         let cmd = DispatchKeyEventParams::builder()
             .r#type(DispatchKeyEventType::KeyDown)
             .key(key_code)
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
-        page.execute(cmd).await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
+
+        page.execute(cmd)
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
         // Send keyup
         let cmd = DispatchKeyEventParams::builder()
             .r#type(DispatchKeyEventType::KeyUp)
             .key(key_code)
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
-        page.execute(cmd).await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
+
+        page.execute(cmd)
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
         Ok(())
     }
 
     pub async fn screenshot(&self, full_page: bool, quality: u8) -> Result<String, BrowserError> {
         let page = self.page()?;
-        
+
         let params = chromiumoxide::page::ScreenshotParams::builder()
             .format(CaptureScreenshotFormat::Jpeg)
             .quality(quality as i64)
             .full_page(full_page)
             .build();
-        
-        let bytes = page.screenshot(params)
+
+        let bytes = page
+            .screenshot(params)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
-        Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes))
+
+        Ok(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &bytes,
+        ))
     }
-    
+
     /// Screenshot and save directly to file (0 tokens - returns filepath only)
-    pub async fn screenshot_to_file(&self, path: &str, full_page: bool, quality: u8) -> Result<String, BrowserError> {
+    pub async fn screenshot_to_file(
+        &self,
+        path: &str,
+        full_page: bool,
+        quality: u8,
+    ) -> Result<String, BrowserError> {
         let page = self.page()?;
-        
+
         let params = chromiumoxide::page::ScreenshotParams::builder()
             .format(CaptureScreenshotFormat::Jpeg)
             .quality(quality as i64)
             .full_page(full_page)
             .build();
-        
-        let bytes = page.screenshot(params)
+
+        let bytes = page
+            .screenshot(params)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
+
         std::fs::write(path, &bytes)
             .map_err(|e| BrowserError::ProcessError(format!("Failed to write: {}", e)))?;
-        
+
         Ok(path.to_string())
     }
 
-    pub async fn screenshot_element(&self, selector: &str, _quality: u8) -> Result<String, BrowserError> {
+    pub async fn screenshot_element(
+        &self,
+        selector: &str,
+        _quality: u8,
+    ) -> Result<String, BrowserError> {
         let page = self.page()?;
-        let el = page.find_element(selector)
+        let el = page
+            .find_element(selector)
             .await
             .map_err(|_| BrowserError::ElementNotFound(selector.into()))?;
-        
-        let bytes = el.screenshot(CaptureScreenshotFormat::Jpeg)
+
+        let bytes = el
+            .screenshot(CaptureScreenshotFormat::Jpeg)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
-        Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes))
+
+        Ok(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &bytes,
+        ))
     }
 
-    pub async fn wait_for(&self, selector: &str, timeout_ms: u64, check_visible: bool) -> Result<(), BrowserError> {
+    pub async fn wait_for(
+        &self,
+        selector: &str,
+        timeout_ms: u64,
+        check_visible: bool,
+    ) -> Result<(), BrowserError> {
         let page = self.page()?;
         let timeout = Duration::from_millis(timeout_ms);
         let start = std::time::Instant::now();
@@ -505,8 +584,9 @@ impl BrowserManager {
                 }
 
                 // Check CSS visibility (display, visibility, opacity, offsetParent)
-                let visible = page.evaluate(format!(
-                    "(() => {{ \
+                let visible = page
+                    .evaluate(format!(
+                        "(() => {{ \
                         const el = document.querySelector('{}'); \
                         if (!el) return false; \
                         const style = window.getComputedStyle(el); \
@@ -515,8 +595,9 @@ impl BrowserManager {
                                style.opacity !== '0' && \
                                el.offsetParent !== null; \
                     }})()",
-                    selector.replace("'", "\\'")
-                )).await
+                        selector.replace("'", "\\'")
+                    ))
+                    .await
                     .ok()
                     .and_then(|v| v.into_value::<bool>().ok())
                     .unwrap_or(false);
@@ -528,14 +609,19 @@ impl BrowserManager {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        Err(BrowserError::Timeout(format!("Waiting for {}{}", selector, if check_visible { " (visible)" } else { "" })))
+        Err(BrowserError::Timeout(format!(
+            "Waiting for {}{}",
+            selector,
+            if check_visible { " (visible)" } else { "" }
+        )))
     }
 
     pub async fn get_html(&self, selector: Option<&str>) -> Result<String, BrowserError> {
         let page = self.page()?;
-        
+
         if let Some(sel) = selector {
-            let el = page.find_element(sel)
+            let el = page
+                .find_element(sel)
                 .await
                 .map_err(|_| BrowserError::ElementNotFound(sel.into()))?;
             el.outer_html()
@@ -543,13 +629,16 @@ impl BrowserManager {
                 .map_err(|e| BrowserError::Cdp(e.to_string()))?
                 .ok_or_else(|| BrowserError::Cdp("No HTML".into()))
         } else {
-            page.content().await.map_err(|e| BrowserError::Cdp(e.to_string()))
+            page.content()
+                .await
+                .map_err(|e| BrowserError::Cdp(e.to_string()))
         }
     }
 
     pub async fn get_text(&self, selector: &str) -> Result<String, BrowserError> {
         let page = self.page()?;
-        let el = page.find_element(selector)
+        let el = page
+            .find_element(selector)
             .await
             .map_err(|_| BrowserError::ElementNotFound(selector.into()))?;
         el.inner_text()
@@ -564,7 +653,7 @@ impl BrowserManager {
             .evaluate(script)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-        
+
         Ok(result.into_value().unwrap_or(serde_json::Value::Null))
     }
 
@@ -618,7 +707,12 @@ impl BrowserManager {
     }
 
     /// Type text into an element found by XPath
-    pub async fn type_xpath(&self, xpath: &str, text: &str, clear: bool) -> Result<String, BrowserError> {
+    pub async fn type_xpath(
+        &self,
+        xpath: &str,
+        text: &str,
+        clear: bool,
+    ) -> Result<String, BrowserError> {
         let el = self.resolve_xpath(xpath).await?;
         let sel = el.get("selector").and_then(|v| v.as_str()).unwrap_or("");
         if !sel.is_empty() {
@@ -631,7 +725,9 @@ impl BrowserManager {
             self.click_coords(cx, cy).await?;
             // Clear existing content if requested
             if clear {
-                self.evaluate("document.activeElement.value = ''").await.ok();
+                self.evaluate("document.activeElement.value = ''")
+                    .await
+                    .ok();
             }
             // Type char by char via CDP key events
             let page = self.page()?;
@@ -641,14 +737,21 @@ impl BrowserManager {
                     .text(ch.to_string())
                     .build()
                     .map_err(|e| BrowserError::Cdp(e.to_string()))?;
-                page.execute(key_event).await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
+                page.execute(key_event)
+                    .await
+                    .map_err(|e| BrowserError::Cdp(e.to_string()))?;
             }
             Ok(format!("Typed into xpath match at ({},{})", cx, cy))
         }
     }
 
     /// Wait for an XPath expression to match an element
-    pub async fn wait_for_xpath(&self, xpath: &str, timeout_ms: u64, check_visible: bool) -> Result<(), BrowserError> {
+    pub async fn wait_for_xpath(
+        &self,
+        xpath: &str,
+        timeout_ms: u64,
+        check_visible: bool,
+    ) -> Result<(), BrowserError> {
         let timeout = Duration::from_millis(timeout_ms);
         let start = std::time::Instant::now();
         let escaped = xpath.replace('"', r#"\""#);
@@ -667,18 +770,29 @@ impl BrowserManager {
             );
             if let Ok(val) = self.evaluate(&script).await {
                 let found = val.get("found").and_then(|v| v.as_bool()).unwrap_or(false);
-                let visible = val.get("visible").and_then(|v| v.as_bool()).unwrap_or(false);
+                let visible = val
+                    .get("visible")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if found && (!check_visible || visible) {
                     return Ok(());
                 }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        Err(BrowserError::Timeout(format!("Waiting for xpath: {}{}", xpath, if check_visible { " (visible)" } else { "" })))
+        Err(BrowserError::Timeout(format!(
+            "Waiting for xpath: {}{}",
+            xpath,
+            if check_visible { " (visible)" } else { "" }
+        )))
     }
 
     /// Auto-wait: wait for selector/xpath to be ready before interacting
-    pub async fn auto_wait_selector(&self, selector: &str, timeout_ms: u64) -> Result<(), BrowserError> {
+    pub async fn auto_wait_selector(
+        &self,
+        selector: &str,
+        timeout_ms: u64,
+    ) -> Result<(), BrowserError> {
         self.wait_for(selector, timeout_ms, true).await
     }
 
@@ -694,12 +808,16 @@ impl BrowserManager {
             "right" => (amount, 0),
             _ => (0, amount),
         };
-        
-        self.evaluate(&format!("window.scrollBy({}, {})", x, y)).await?;
+
+        self.evaluate(&format!("window.scrollBy({}, {})", x, y))
+            .await?;
         Ok(())
     }
 
-    pub async fn get_element_bounds(&self, selector: &str) -> Result<(f64, f64, f64, f64), BrowserError> {
+    pub async fn get_element_bounds(
+        &self,
+        selector: &str,
+    ) -> Result<(f64, f64, f64, f64), BrowserError> {
         let script = format!(
             r#"(() => {{
                 const el = document.querySelector('{}');
@@ -709,7 +827,7 @@ impl BrowserManager {
             }})()"#,
             selector.replace("'", "\\'")
         );
-        
+
         let result = self.evaluate(&script).await?;
         if let Some(arr) = result.as_array() {
             if arr.len() == 4 {
@@ -733,7 +851,9 @@ impl BrowserManager {
         let script = format!(
             r#"document.querySelector('{}').value = '{}'; 
                document.querySelector('{}').dispatchEvent(new Event('change'));"#,
-            selector.replace("'", "\\'"), value.replace("'", "\\'"), selector.replace("'", "\\'")
+            selector.replace("'", "\\'"),
+            value.replace("'", "\\'"),
+            selector.replace("'", "\\'")
         );
         self.evaluate(&script).await?;
         Ok(())
@@ -743,13 +863,16 @@ impl BrowserManager {
         let page = self.page()?;
         // Try chromiumoxide typed API first
         match page.get_cookies().await {
-            Ok(cookies) => {
-                Ok(cookies.into_iter().map(|c| serde_json::json!({
-                    "name": c.name,
-                    "value": c.value,
-                    "domain": c.domain,
-                })).collect())
-            }
+            Ok(cookies) => Ok(cookies
+                .into_iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "name": c.name,
+                        "value": c.value,
+                        "domain": c.domain,
+                    })
+                })
+                .collect()),
             Err(_) => {
                 // Fallback: Chrome periodically adds/removes cookie fields (e.g. sameParty)
                 // which breaks chromiumoxide's typed deserialization. Use JS fallback.
@@ -762,16 +885,23 @@ impl BrowserManager {
         }
     }
 
-    pub async fn set_cookie(&self, name: &str, value: &str, domain: &str) -> Result<(), BrowserError> {
+    pub async fn set_cookie(
+        &self,
+        name: &str,
+        value: &str,
+        domain: &str,
+    ) -> Result<(), BrowserError> {
         let page = self.page()?;
-        page.set_cookie(chromiumoxide::cdp::browser_protocol::network::CookieParam::builder()
-            .name(name)
-            .value(value)
-            .domain(domain)
-            .build()
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?)
-            .await
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        page.set_cookie(
+            chromiumoxide::cdp::browser_protocol::network::CookieParam::builder()
+                .name(name)
+                .value(value)
+                .domain(domain)
+                .build()
+                .map_err(|e| BrowserError::Cdp(e.to_string()))?,
+        )
+        .await
+        .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         Ok(())
     }
 
@@ -795,7 +925,8 @@ impl BrowserManager {
 
     pub async fn new_page(&mut self) -> Result<(), BrowserError> {
         let browser = self.browser.as_ref().ok_or(BrowserError::NotLaunched)?;
-        let page = browser.new_page("about:blank")
+        let page = browser
+            .new_page("about:blank")
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         self.pages.push(page);
@@ -807,7 +938,11 @@ impl BrowserManager {
         let mut tabs = Vec::new();
         for (idx, page) in self.pages.iter().enumerate() {
             let url = page.url().await.unwrap_or_default().unwrap_or_default();
-            let title = page.get_title().await.unwrap_or_default().unwrap_or_default();
+            let title = page
+                .get_title()
+                .await
+                .unwrap_or_default()
+                .unwrap_or_default();
             tabs.push(serde_json::json!({
                 "index": idx,
                 "url": url,
@@ -820,7 +955,11 @@ impl BrowserManager {
 
     pub fn switch_tab_by_index(&mut self, index: usize) -> Result<(), BrowserError> {
         if index >= self.pages.len() {
-            return Err(BrowserError::Cdp(format!("Tab index {} out of range (0..{})", index, self.pages.len())));
+            return Err(BrowserError::Cdp(format!(
+                "Tab index {} out of range (0..{})",
+                index,
+                self.pages.len()
+            )));
         }
         self.active_page_index = index;
         Ok(())
@@ -835,18 +974,27 @@ impl BrowserManager {
                 return Ok(idx);
             }
         }
-        Err(BrowserError::Cdp(format!("No tab with URL containing '{}'", url_match)))
+        Err(BrowserError::Cdp(format!(
+            "No tab with URL containing '{}'",
+            url_match
+        )))
     }
 
     pub async fn close_tab(&mut self, index: usize) -> Result<(), BrowserError> {
         if index >= self.pages.len() {
-            return Err(BrowserError::Cdp(format!("Tab index {} out of range (0..{})", index, self.pages.len())));
+            return Err(BrowserError::Cdp(format!(
+                "Tab index {} out of range (0..{})",
+                index,
+                self.pages.len()
+            )));
         }
         if self.pages.len() == 1 {
             return Err(BrowserError::Cdp("Cannot close the last tab".into()));
         }
         let page = self.pages.remove(index);
-        page.close().await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        page.close()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         // Adjust active index
         if self.active_page_index >= self.pages.len() {
             self.active_page_index = self.pages.len() - 1;
@@ -878,7 +1026,7 @@ impl BrowserManager {
                     };
                 });
         "#;
-        
+
         let result = self.evaluate(script).await?;
         if let Some(arr) = result.as_array() {
             Ok(arr.clone())
@@ -887,7 +1035,12 @@ impl BrowserManager {
         }
     }
 
-    pub async fn screenshot_burst(&self, count: usize, interval_ms: u64, quality: u8) -> Result<Vec<String>, BrowserError> {
+    pub async fn screenshot_burst(
+        &self,
+        count: usize,
+        interval_ms: u64,
+        quality: u8,
+    ) -> Result<Vec<String>, BrowserError> {
         let mut shots = Vec::with_capacity(count);
         for _ in 0..count {
             shots.push(self.screenshot(false, quality).await?);
@@ -898,7 +1051,8 @@ impl BrowserManager {
 
     pub async fn hover(&self, selector: &str) -> Result<(), BrowserError> {
         let page = self.page()?;
-        let el = page.find_element(selector)
+        let el = page
+            .find_element(selector)
             .await
             .map_err(|_| BrowserError::ElementNotFound(selector.into()))?;
         el.scroll_into_view().await.ok();
@@ -907,10 +1061,13 @@ impl BrowserManager {
 
     pub async fn focus(&self, selector: &str) -> Result<(), BrowserError> {
         let page = self.page()?;
-        let el = page.find_element(selector)
+        let el = page
+            .find_element(selector)
             .await
             .map_err(|_| BrowserError::ElementNotFound(selector.into()))?;
-        el.focus().await.map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        el.focus()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         Ok(())
     }
 
@@ -931,12 +1088,13 @@ impl BrowserManager {
         })"#;
         self.evaluate(script).await
     }
-    
+
     pub async fn inject_script(&self, script: &str) -> Result<(), BrowserError> {
-        self.evaluate(&format!("(function(){{ {} }})()", script)).await?;
+        self.evaluate(&format!("(function(){{ {} }})()", script))
+            .await?;
         Ok(())
     }
-    
+
     pub async fn get_forms(&self) -> Result<serde_json::Value, BrowserError> {
         let script = r#"
             Array.from(document.forms).map((f, i) => ({
@@ -954,8 +1112,12 @@ impl BrowserManager {
         "#;
         self.evaluate(script).await
     }
-    
-    pub async fn fill_form(&self, form_selector: &str, data: &serde_json::Value) -> Result<(), BrowserError> {
+
+    pub async fn fill_form(
+        &self,
+        form_selector: &str,
+        data: &serde_json::Value,
+    ) -> Result<(), BrowserError> {
         if let Some(obj) = data.as_object() {
             for (name, value) in obj {
                 if let Some(v) = value.as_str() {
@@ -971,7 +1133,7 @@ impl BrowserManager {
         }
         Ok(())
     }
-    
+
     pub async fn submit_form(&self, selector: &str) -> Result<(), BrowserError> {
         let script = format!(
             "document.querySelector('{}')?.submit()",
@@ -981,29 +1143,32 @@ impl BrowserManager {
         tokio::time::sleep(Duration::from_millis(500)).await;
         Ok(())
     }
-    
+
     pub async fn wait_network_idle(&self, timeout_ms: u64) -> Result<(), BrowserError> {
         tokio::time::sleep(Duration::from_millis(timeout_ms.min(5000))).await;
         Ok(())
     }
-    
+
     pub async fn get_url(&self) -> Result<String, BrowserError> {
         let result = self.evaluate("window.location.href").await?;
-        result.as_str().map(String::from).ok_or(BrowserError::Cdp("No URL".into()))
+        result
+            .as_str()
+            .map(String::from)
+            .ok_or(BrowserError::Cdp("No URL".into()))
     }
-    
+
     pub async fn go_back(&self) -> Result<(), BrowserError> {
         self.evaluate("window.history.back()").await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
         Ok(())
     }
-    
+
     pub async fn go_forward(&self) -> Result<(), BrowserError> {
         self.evaluate("window.history.forward()").await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
         Ok(())
     }
-    
+
     pub async fn reload(&self) -> Result<(), BrowserError> {
         self.evaluate("window.location.reload()").await?;
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -1013,10 +1178,22 @@ impl BrowserManager {
     // ===== P1: Network Interception (JS-based) =====
 
     /// Add a network route rule. Injects JS interception on first call.
-    pub async fn add_route(&mut self, pattern: String, action: RouteAction) -> Result<String, BrowserError> {
-        self.routes.push(RouteRule { pattern: pattern.clone(), action: action.clone() });
+    pub async fn add_route(
+        &mut self,
+        pattern: String,
+        action: RouteAction,
+    ) -> Result<String, BrowserError> {
+        self.routes.push(RouteRule {
+            pattern: pattern.clone(),
+            action: action.clone(),
+        });
         self.inject_interception().await?;
-        Ok(format!("Route added: {} ({:?}), {} total routes", pattern, action, self.routes.len()))
+        Ok(format!(
+            "Route added: {} ({:?}), {} total routes",
+            pattern,
+            action,
+            self.routes.len()
+        ))
     }
 
     /// Remove a route by pattern
@@ -1024,24 +1201,37 @@ impl BrowserManager {
         let before = self.routes.len();
         self.routes.retain(|r| r.pattern != pattern);
         let removed = before - self.routes.len();
-        Ok(format!("Removed {} route(s) matching '{}', {} remaining", removed, pattern, self.routes.len()))
+        Ok(format!(
+            "Removed {} route(s) matching '{}', {} remaining",
+            removed,
+            pattern,
+            self.routes.len()
+        ))
     }
 
     /// List all active routes
     pub fn list_routes(&self) -> Vec<serde_json::Value> {
-        self.routes.iter().map(|r| {
-            let action_str = match &r.action {
-                RouteAction::Block => "block".to_string(),
-                RouteAction::Mock { status, content_type, .. } => format!("mock({}; {})", status, content_type),
-                RouteAction::Log => "log".to_string(),
-            };
-            serde_json::json!({"pattern": r.pattern, "action": action_str})
-        }).collect()
+        self.routes
+            .iter()
+            .map(|r| {
+                let action_str = match &r.action {
+                    RouteAction::Block => "block".to_string(),
+                    RouteAction::Mock {
+                        status,
+                        content_type,
+                        ..
+                    } => format!("mock({}; {})", status, content_type),
+                    RouteAction::Log => "log".to_string(),
+                };
+                serde_json::json!({"pattern": r.pattern, "action": action_str})
+            })
+            .collect()
     }
 
     /// Get intercepted/logged requests from the JS layer
     pub async fn get_intercepted_requests(&self) -> Result<serde_json::Value, BrowserError> {
-        self.evaluate("JSON.stringify(window.__mcp_intercepted || [])").await
+        self.evaluate("JSON.stringify(window.__mcp_intercepted || [])")
+            .await
     }
 
     /// Clear intercepted request log
@@ -1054,11 +1244,18 @@ impl BrowserManager {
     async fn inject_interception(&mut self) -> Result<(), BrowserError> {
         let mut rules_js = String::from("[");
         for (idx, route) in self.routes.iter().enumerate() {
-            if idx > 0 { rules_js.push(','); }
+            if idx > 0 {
+                rules_js.push(',');
+            }
             let action_js = match &route.action {
                 RouteAction::Block => r#"{"type":"block"}"#.to_string(),
-                RouteAction::Mock { status, content_type, body } => {
-                    format!(r#"{{"type":"mock","status":{},"contentType":"{}","body":{}}}"#,
+                RouteAction::Mock {
+                    status,
+                    content_type,
+                    body,
+                } => {
+                    format!(
+                        r#"{{"type":"mock","status":{},"contentType":"{}","body":{}}}"#,
                         status,
                         content_type.replace('"', r#"\""#),
                         serde_json::to_string(body).unwrap_or_default()
@@ -1066,12 +1263,16 @@ impl BrowserManager {
                 }
                 RouteAction::Log => r#"{"type":"log"}"#.to_string(),
             };
-            rules_js.push_str(&format!(r#"{{"pattern":"{}","action":{}}}"#,
-                route.pattern.replace('"', r#"\""#), action_js));
+            rules_js.push_str(&format!(
+                r#"{{"pattern":"{}","action":{}}}"#,
+                route.pattern.replace('"', r#"\""#),
+                action_js
+            ));
         }
         rules_js.push(']');
 
-        let script = format!(r#"(() => {{
+        let script = format!(
+            r#"(() => {{
             window.__mcp_routes = {rules};
             window.__mcp_intercepted = window.__mcp_intercepted || [];
             if (window.__mcp_interception_installed) return 'updated';
@@ -1138,7 +1339,9 @@ impl BrowserManager {
 
             window.__mcp_interception_installed = true;
             return 'installed';
-        }})()"#, rules = rules_js);
+        }})()"#,
+            rules = rules_js
+        );
 
         self.evaluate(&script).await?;
         self.interception_active = true;
@@ -1150,17 +1353,23 @@ impl BrowserManager {
         self.routes.clear();
         self.interception_active = false;
         // Can't fully restore, but we can empty the rules so everything passes through
-        self.evaluate("window.__mcp_routes = []; window.__mcp_interception_installed = false").await?;
+        self.evaluate("window.__mcp_routes = []; window.__mcp_interception_installed = false")
+            .await?;
         Ok("Interception disabled, all routes cleared".into())
     }
 
     // ===== P5: Multiple Browser Contexts =====
 
     /// Create a new named browser context with its own page
-    pub async fn create_context(&mut self, name: &str, url: Option<&str>) -> Result<String, BrowserError> {
+    pub async fn create_context(
+        &mut self,
+        name: &str,
+        url: Option<&str>,
+    ) -> Result<String, BrowserError> {
         let browser = self.browser.as_ref().ok_or(BrowserError::NotLaunched)?;
         let target_url = url.unwrap_or("about:blank");
-        let page = browser.new_page(target_url)
+        let page = browser
+            .new_page(target_url)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
@@ -1178,7 +1387,10 @@ impl BrowserManager {
         let is_default = name == "default" || name == "__default__";
 
         if !is_default && !self.contexts.contains_key(name) {
-            return Err(BrowserError::ElementNotFound(format!("Context '{}' not found", name)));
+            return Err(BrowserError::ElementNotFound(format!(
+                "Context '{}' not found",
+                name
+            )));
         }
 
         // Already in the requested context? No-op.
@@ -1190,7 +1402,10 @@ impl BrowserManager {
         }
 
         // Save current pages to current context (or default)
-        let current_name = self.active_context.clone().unwrap_or_else(|| "__default__".to_string());
+        let current_name = self
+            .active_context
+            .clone()
+            .unwrap_or_else(|| "__default__".to_string());
         let saved = BrowserContext {
             pages: std::mem::take(&mut self.pages),
             active_page_index: self.active_page_index,
@@ -1201,11 +1416,20 @@ impl BrowserManager {
         let lookup_key = if is_default { "__default__" } else { name };
         let target = match self.contexts.remove(lookup_key) {
             Some(ctx) => ctx,
-            None => return Err(BrowserError::ElementNotFound(format!("Context '{}' not found", name))),
+            None => {
+                return Err(BrowserError::ElementNotFound(format!(
+                    "Context '{}' not found",
+                    name
+                )))
+            }
         };
         self.pages = target.pages;
         self.active_page_index = target.active_page_index;
-        self.active_context = if is_default { None } else { Some(name.to_string()) };
+        self.active_context = if is_default {
+            None
+        } else {
+            Some(name.to_string())
+        };
 
         Ok(format!("Switched to context '{}'", name))
     }
@@ -1219,9 +1443,15 @@ impl BrowserManager {
             if self.active_context.as_deref() == Some(name) {
                 self.active_context = None;
             }
-            Ok(format!("Context '{}' destroyed ({} pages closed)", name, count))
+            Ok(format!(
+                "Context '{}' destroyed ({} pages closed)",
+                name, count
+            ))
         } else {
-            Err(BrowserError::ElementNotFound(format!("Context '{}' not found", name)))
+            Err(BrowserError::ElementNotFound(format!(
+                "Context '{}' not found",
+                name
+            )))
         }
     }
 
@@ -1320,16 +1550,22 @@ impl BrowserManager {
         }
 
         // Collect JS-side trace entries
-        let js_entries = self.evaluate("JSON.stringify(window.__mcp_trace || [])").await?;
+        let js_entries = self
+            .evaluate("JSON.stringify(window.__mcp_trace || [])")
+            .await?;
 
         // Clean up
-        self.evaluate(r#"(() => {
+        self.evaluate(
+            r#"(() => {
             if (window.__mcp_trace_observer) window.__mcp_trace_observer.disconnect();
             if (window.__mcp_trace_url_check) clearInterval(window.__mcp_trace_url_check);
             delete window.__mcp_trace;
             delete window.__mcp_trace_start;
             return 'cleaned';
-        })()"#).await.ok();
+        })()"#,
+        )
+        .await
+        .ok();
 
         self.trace_active = false;
 
@@ -1357,13 +1593,18 @@ impl BrowserManager {
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         std::fs::write(path, &json)
             .map_err(|e| BrowserError::Cdp(format!("Failed to write trace: {}", e)))?;
-        let count = trace_data.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
+        let count = trace_data
+            .get("count")
+            .and_then(|c| c.as_u64())
+            .unwrap_or(0);
         Ok(format!("Trace saved to {} ({} entries)", path, count))
     }
 
     /// Add a manual trace entry (from tool-level actions)
     pub fn trace_log(&mut self, entry_type: &str, name: &str, details: Option<serde_json::Value>) {
-        if !self.trace_active { return; }
+        if !self.trace_active {
+            return;
+        }
         let mut entry = serde_json::json!({
             "type": entry_type,
             "name": name,
