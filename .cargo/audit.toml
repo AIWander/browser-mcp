@@ -1,0 +1,25 @@
+# cargo-audit configuration.
+#
+# Everything listed here is a TRANSITIVE advisory with no reachable fix at the
+# current dependency set. `cargo audit` still fails the Supply Chain workflow on
+# any advisory that is NOT listed below, so new problems are caught immediately.
+#
+# Review this list whenever `chromiumoxide` or `vision-core` is upgraded.
+
+[advisories]
+ignore = [
+  # h2 unbounded empty DATA frames (low severity, HTTP/2 server-side DoS).
+  # Patched only in h2 >= 0.4.16; the 0.3.x line is EOL with no backport.
+  # Reached via chromiumoxide 0.5 -> reqwest 0.11 -> hyper 0.14 -> h2 0.3.27.
+  # h2 0.4.18 is also in the graph and is already patched. Removing 0.3.x
+  # requires a breaking chromiumoxide 0.5 -> 0.9 upgrade.
+  "RUSTSEC-2026-0258",
+
+  # quick-xml 0.28.2 quadratic duplicate-attribute check / unbounded namespace
+  # allocation. Patched in quick-xml >= 0.41.0, but 0.28 is pinned by
+  # wayland-scanner 0.30 (a build-time proc-macro that parses the vendored
+  # Wayland protocol XML). Path is Linux-only and not attacker-reachable:
+  # vision-core -> screenshots 0.8 -> libwayshot 0.2 -> wayland-scanner.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]
